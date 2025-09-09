@@ -1,11 +1,30 @@
-# Astro Runtime includes the following pre-installed providers packages: https://www.astronomer.io/docs/astro/runtime-image-architecture#provider-packages
+# requirements.txt - Optimizado para Primera Entrega (sin GPU dependencies)
+
+# Core data processing (esencial para tu DAG)
 pandas
 pyyaml
-pyarrow
-scikit-learn
-xgboost
-statsmodels
-prophet
-python-dateutil
 requests
 certifi
+beautifulsoup4
+lxml
+urllib3
+jsonschema
+chardet
+
+# Fechas y utilidades
+python-dateutil
+
+# Análisis de datos básico
+numpy
+scipy
+
+# Machine Learning CPU-only (sin GPU dependencies problemáticas)
+scikit-learn
+
+# Para futuras entregas (comentado para evitar problemas)
+# xgboost  # Causa problemas con nvidia-nccl-cu12
+# statsmodels  # Puede tener dependencies pesadas
+# prophet  # Dependencies complejas
+
+# Utilidades adicionales
+pathlib

@@ -7,6 +7,14 @@ open_data_mza:
    parse: false
    min_bytes: 5000
 
+
+eti:
+  dataset_name: "encuesta_turismo_internacional"
+  dataset_url: "https://datos.gob.ar/dataset/turismo-encuesta-turismo-internacional-eti"
+  min_bytes: 10000
+  dynamic_scraping: true
+  type: "dataset_page_scraping" 
+
 # Configuración adicional para validaciones
 validation:
   enable_data_quality_checks: true

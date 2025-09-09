@@ -1,0 +1,12 @@
+# Astro Runtime includes the following pre-installed providers packages: https://www.astronomer.io/docs/astro/runtime-image-architecture#provider-packages
+pandas
+numpy
+pyyaml
+pyarrow
+scikit-learn
+xgboost
+statsmodels
+prophet
+python-dateutil
+requests
+camelot-py[cv2]

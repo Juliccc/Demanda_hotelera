@@ -1,0 +1,42 @@
+# include/config/sources.yaml
+
+indec:
+  eoh:
+    base_url: "https://www.indec.gob.ar/uploads/informesdeprensa/"
+    months:
+      - name: "eoh_08_2517BC177A31.pdf"
+      - name: "eoh_07_257CA328DDCB.pdf"
+      # Puedes agregar más meses según necesites:
+      # - name: "eoh_06_XXXXXXXXXXXXXX.pdf"
+      # - name: "eoh_05_XXXXXXXXXXXXXX.pdf"
+    parse: true  # ← CAMBIADO: Los PDFs de INDEC necesitan parsearse para extraer datos
+    min_bytes: 50000  # ← CAMBIADO: Los PDFs suelen ser más grandes, 10KB es muy poco
+    parse_pages: "1-5"  # ← CAMBIADO: Amplié el rango para capturar más tablas
+
+yvera:
+  oferta_alojamientos:
+    url: "https://tableros.yvera.tur.ar/recursos/biblioteca/informe_alojamiento_2023.pdf"
+    parse: true  # ← CORRECTO: PDF que necesita parsearse
+    min_bytes: 200000  # ← CORRECTO: 200KB es apropiado para este PDF
+    parse_pages: "1-10"  # ← AMPLIADO: Para capturar más datos del informe
+
+# Para futuras entregas (descomenta cuando sea necesario):
+# open_data_mza:
+#   dataset_name: "turismo-internacional-total-pais"
+#   api_url: "https://datos.yvera.gob.ar/api/3/action/package_show?id=turismo-internacional-total-pais"
+#   resource_format: "csv"
+#   parse: false
+#   min_bytes: 5000
+
+# Configuración adicional para validaciones
+validation:
+  enable_data_quality_checks: true
+  min_rows_per_table: 5
+  required_columns: []  # Definir en entregas posteriores
+  
+# Variables de entorno por defecto
+defaults:
+  timeout_seconds: 120
+  max_retries: 3
+  chunk_size: 8192
+  

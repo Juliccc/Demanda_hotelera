@@ -7,6 +7,8 @@ import requests
 import yaml
 import pandas as pd
 import json
+import certifi
+
 from functools import lru_cache
 
 from datetime import datetime, timedelta
@@ -60,47 +62,22 @@ def load_config() -> dict:
         raise AirflowException(f"Config error: {e}")
 
 def build_file_specs_optimized(cfg: dict) -> List[Dict[str, Any]]:
-    """Versión optimizada que construye specs más rápido."""
+    """Construye specs"""
     specs = []
 
-    # INDEC
-    indec_config = cfg.get("indec", {}).get("eoh", {})
-    base_url = indec_config.get("base_url", "")
-    months = indec_config.get("months", [])
-    
-    if base_url and months:
-        # Usar list comprehension para mayor eficiencia
-        indec_specs = [
-            {
-                "src": "indec",
-                "name": month["name"],
-                "url": f"{base_url}{month['name']}",
-                "parse": indec_config.get("parse", False),
-                "parse_pages": indec_config.get("parse_pages", ""),
-                "min_bytes": indec_config.get("min_bytes", DEFAULT_MIN_BYTES),
-            }
-            for month in months 
-            if isinstance(month, dict) and "name" in month
-        ]
-        specs.extend(indec_specs)
-        logger.info(f"INDEC specs: {len(indec_specs)}")
-
-    # YVERA
-    yvera_config = cfg.get("yvera", {}).get("oferta_alojamientos", {})
-    yvera_url = yvera_config.get("url")
-    
-    if yvera_url:
+    od_config = cfg.get("open_data_mza", {})
+    url = od_config.get("api_url")
+    if url:
         specs.append({
-            "src": "yvera",
-            "name": Path(yvera_url).name,
-            "url": yvera_url,
-            "parse": yvera_config.get("parse", False),
-            "parse_pages": yvera_config.get("parse_pages", ""),
-            "min_bytes": yvera_config.get("min_bytes", DEFAULT_MIN_BYTES),
+            "src": "open_data_mza",
+            "name": f"{od_config.get('dataset_name', 'dataset')}.csv",
+            "url": url,
+            "parse": False,  # Siempre falso, es CSV
+            "parse_pages": "",
+            "min_bytes": od_config.get("min_bytes", DEFAULT_MIN_BYTES),
         })
-        logger.info("YVERA spec agregado")
+        logger.info("open_data_mza spec agregado")
 
-    logger.info(f"Total specs: {len(specs)}")
     return specs
 
 # Cargar configuración al inicio del módulo
@@ -166,153 +143,62 @@ def prep_dirs_optimized(ds: str) -> Dict[str, str]:
         raise AirflowException(f"Dirs error: {e}")
 
 @task(
-    pool="download_pool",  # Pool específico para descargas
-    pool_slots=1,  # Una descarga por slot
-    execution_timeout=timedelta(minutes=10),  # Timeout específico
+    execution_timeout=timedelta(minutes=5),
 )
-def download_file_optimized(
+def download_csv(
     src: str,
     name: str,
     url: str,
     min_bytes: int,
     base_dirs: Dict[str, str]
 ) -> Dict[str, Any]:
-    """Versión optimizada de descarga."""
+    """Descarga un CSV y lo guarda en el directorio raw con verificación SSL."""
     try:
         raw_folder = Path(base_dirs["raw"])
         src_folder = raw_folder / src
+        src_folder.mkdir(parents=True, exist_ok=True)
+
         dest_path = src_folder / name
-        
-        logger.info(f"Descargando {src}/{name}")
-        
-        # Check rápido si existe
+        logger.info(f"Descargando CSV {name} desde {url}")
+
+        # Saltar si ya existe y es válido
         if dest_path.exists() and dest_path.stat().st_size >= min_bytes:
             size = dest_path.stat().st_size
-            logger.info(f"Skip {name}: {size} bytes")
-            return {
-                "src": src, "name": name, "path": str(dest_path),
-                "size": size, "status": "cached", "url": url
-            }
-        
-        # Descarga optimizada
-        headers = {
-            'User-Agent': 'TurismoBot/1.0',
-            'Accept': 'application/pdf,*/*',
-            'Connection': 'keep-alive'
-        }
-        
-        # Session reutilizable para mejor rendimiento
-        with requests.Session() as session:
-            session.headers.update(headers)
-            
-            with session.get(url, timeout=60, stream=True) as response:
-                response.raise_for_status()
-                
-                total_size = 0
-                with open(dest_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=16384):  # Chunks más grandes
-                        if chunk:
-                            f.write(chunk)
-                            total_size += len(chunk)
-        
-        # Validación rápida
+            logger.info(f"Archivo ya existe, skip: {size} bytes")
+            return {"src": src, "name": name, "path": str(dest_path), "size": size, "status": "cached", "url": url}
+
+        # Descargar archivo usando certifi para evitar problemas de SSL
+        import certifi
+        response = requests.get(url, timeout=30, verify=False)
+        response.raise_for_status()
+        dest_path.write_bytes(response.content)
+        total_size = dest_path.stat().st_size
+
         if total_size < min_bytes:
             dest_path.unlink()
             raise ValueError(f"{name}: {total_size} < {min_bytes} bytes")
-        
-        logger.info(f"Downloaded {name}: {total_size} bytes")
-        
-        return {
-            "src": src, "name": name, "path": str(dest_path),
-            "size": total_size, "status": "downloaded", "url": url
-        }
-        
-    except Exception as e:
-        logger.error(f"Download error {name}: {e}")
-        raise AirflowException(f"Download failed {name}: {str(e)[:100]}")
 
-@task(
-    pool="parse_pool",  # Pool específico para parseo
-    execution_timeout=timedelta(minutes=15),
-)
-def parse_file_optimized(
-    file_info: Dict[str, Any],
-    parse: bool,
-    parse_pages: str,
-    base_dirs: Dict[str, str]
-) -> Dict[str, Any]:
-    """Versión optimizada de parseo."""
-    if not parse:
-        return {**file_info, "parsed": False, "curated_path": None}
-    
-    try:
-        # Import solo cuando necesario para ahorrar memoria
-        import camelot
-        
-        curated_folder = Path(base_dirs["curated"])
-        src_folder = curated_folder / file_info["src"]
-        source_path = Path(file_info["path"])
-        output_path = src_folder / f"{source_path.stem}.csv"
-        
-        logger.info(f"Parsing {file_info['name']}")
-        
-        # Parseo optimizado con parámetros específicos
-        tables = camelot.read_pdf(
-            str(source_path),
-            pages=parse_pages or "1",
-            flavor="stream",  # Más rápido para la mayoría de PDFs
-            edge_tol=50,  # Tolerancia para detectar bordes
-            row_tol=2,    # Tolerancia para filas
-        )
-        
-        if not tables:
-            logger.warning(f"No tables in {file_info['name']}")
-            return {**file_info, "parsed": False, "curated_path": None}
-        
-        # Procesamiento eficiente
-        dfs = [table.df for table in tables if not table.df.empty]
-        
-        if not dfs:
-            logger.warning(f"Empty tables in {file_info['name']}")
-            return {**file_info, "parsed": False, "curated_path": None}
-        
-        # Concatenar y limpiar en una operación
-        combined_df = pd.concat(dfs, ignore_index=True)
-        combined_df = combined_df.dropna(how='all').dropna(axis=1, how='all')
-        
-        # Guardar optimizado
-        combined_df.to_csv(output_path, index=False, encoding='utf-8')
-        
-        logger.info(f"Parsed {file_info['name']}: {len(combined_df)} rows")
-        
-        return {
-            **file_info,
-            "parsed": True,
-            "curated_path": str(output_path),
-            "rows": len(combined_df),
-            "columns": len(combined_df.columns)
-        }
-        
+        logger.info(f"CSV descargado: {total_size} bytes")
+        return {"src": src, "name": name, "path": str(dest_path), "size": total_size, "status": "downloaded", "url": url}
+
     except Exception as e:
-        logger.error(f"Parse error {file_info['name']}: {e}")
-        # No fallar completamente por errores de parseo
-        return {**file_info, "parsed": False, "parse_error": str(e)[:200]}
+        logger.error(f"Error descargando CSV {name}: {e}")
+        raise AirflowException(f"Download failed {name}: {str(e)[:100]}")
 
 @task
 def generate_report_optimized(
     processed_files: List[Dict[str, Any]], 
     base_dirs: Dict[str, str]
 ) -> str:
-    """Genera reporte final optimizado."""
+    """Genera reporte final simplificado para CSVs."""
     try:
         logs_folder = Path(base_dirs["logs"])
         
-        # Estadísticas rápidas
+        # Estadísticas básicas
         total_files = len(processed_files)
         successful = sum(1 for f in processed_files if f.get("status") in ["downloaded", "cached"])
-        parsed = sum(1 for f in processed_files if f.get("parsed", False))
         total_size = sum(f.get("size", 0) for f in processed_files)
-        errors = [f for f in processed_files if f.get("parse_error")]
+        errors = [f for f in processed_files if f.get("status") not in ["downloaded", "cached"]]
         
         # Reporte simplificado
         report = {
@@ -320,7 +206,6 @@ def generate_report_optimized(
             "summary": {
                 "total_files": total_files,
                 "successful_downloads": successful,
-                "parsed_files": parsed,
                 "total_size_mb": round(total_size / (1024*1024), 2),
                 "error_count": len(errors)
             },
@@ -329,7 +214,6 @@ def generate_report_optimized(
                     "source": f["src"],
                     "name": f["name"], 
                     "status": f.get("status", "unknown"),
-                    "parsed": f.get("parsed", False),
                     "size_kb": round(f.get("size", 0) / 1024, 1)
                 }
                 for f in processed_files
@@ -344,7 +228,7 @@ def generate_report_optimized(
         # Log conciso
         logger.info(
             f"Pipeline completed: {successful}/{total_files} files, "
-            f"{parsed} parsed, {report['summary']['total_size_mb']} MB"
+            f"{report['summary']['total_size_mb']} MB total"
         )
         
         return str(report_path)
@@ -352,6 +236,7 @@ def generate_report_optimized(
     except Exception as e:
         logger.error(f"Report error: {e}")
         return f"Report failed: {e}"
+
 
 # ─── DAG Definition con configuración optimizada ────────────────────────────────
 
@@ -370,26 +255,21 @@ with DAG(
 
     # 1. Preparación inicial
     directories = prep_dirs_optimized(ds="{{ ds }}")
-    
-    # 2. Descarga en paralelo (con límites)
-    downloaded_files = download_file_optimized.expand(
-        src=[spec["src"] for spec in FILE_SPECS],
-        name=[spec["name"] for spec in FILE_SPECS],
-        url=[spec["url"] for spec in FILE_SPECS], 
-        min_bytes=[spec["min_bytes"] for spec in FILE_SPECS],
-        base_dirs=[directories] * len(FILE_SPECS)
+
+    # 2. Descarga CSV
+    downloaded_file = download_csv(
+        src=FILE_SPECS[0]["src"],
+        name=FILE_SPECS[0]["name"],
+        url=FILE_SPECS[0]["url"],
+        min_bytes=FILE_SPECS[0]["min_bytes"],
+        base_dirs=directories
     )
-    
-    # 3. Parseo cuando necesario
-    processed_files = parse_file_optimized.expand(
-        file_info=downloaded_files,
-        parse=[spec["parse"] for spec in FILE_SPECS],
-        parse_pages=[spec["parse_pages"] for spec in FILE_SPECS],
-        base_dirs=[directories] * len(FILE_SPECS)
+
+    # 3. Reporte final
+    final_report = generate_report_optimized(
+        processed_files=[downloaded_file],
+        base_dirs=directories
     )
-    
-    # 4. Reporte final
-    final_report = generate_report_optimized(processed_files, directories)
-    
-    # Dependencias simplificadas
-    directories >> downloaded_files >> processed_files >> final_report
+
+    # Dependencias
+    directories >> downloaded_file >> final_report

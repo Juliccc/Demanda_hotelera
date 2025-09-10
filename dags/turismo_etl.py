@@ -442,11 +442,11 @@ def validate_downloaded_data(
                             df = pd.read_csv(file_path, nrows=100)  # Solo primeras 100 filas para validación
                             
                             file_validation.update({
-                                "rows_sampled": len(df),
-                                "columns": len(df.columns),
-                                "has_data": len(df) >= min_rows,
-                                "empty_columns": df.isna().all().sum(),
-                                "data_quality": "good" if len(df) >= min_rows else "needs_review"
+                                "rows_sampled": int(len(df)),  # Convertir a int nativo
+                                 "columns": int(len(df.columns)),  # Convertir a int nativo
+                                 "has_data": len(df) >= min_rows,
+                                 "empty_columns": int(df.isna().all().sum()),  # Convertir a int nativo
+                                 "data_quality": "good" if len(df) >= min_rows else "needs_review"
                             })
                             
                             if len(df) < min_rows:

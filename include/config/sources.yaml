@@ -19,7 +19,7 @@ eti:
 validation:
   enable_data_quality_checks: true
   min_rows_per_table: 5
-  required_columns: []  # Definir en entregas posteriores
+  required_columns: []  # Se definirá luego 
   
 # Variables de entorno por defecto
 defaults:

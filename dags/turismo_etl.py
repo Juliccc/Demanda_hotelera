@@ -1,5 +1,3 @@
-# dags/mza_turismo_etl_final.py
-
 from __future__ import annotations
 import os
 import logging
@@ -543,6 +541,54 @@ def generate_pipeline_report(
         logger.error(f"❌ Error generando reporte final: {e}")
         return f"Report generation failed: {e}"
 
+@task
+def unify_and_filter_mendoza(
+    all_downloads: List[Any],
+    directories: Dict[str, str]
+) -> str:
+    """Une todos los CSV descargados y filtra solo datos de Mendoza."""
+    try:
+        # Aplanar lista de descargas
+        files = []
+        for download in all_downloads:
+            if isinstance(download, list):
+                files.extend(download)
+            else:
+                files.append(download)
+        
+        dfs = []
+        for file_info in files:
+            path = file_info.get("path", "")
+            status = file_info.get("status", "")
+            if status.startswith("downloaded") and path.endswith(".csv"):
+                try:
+                    df = pd.read_csv(path)
+                    # Filtrar por Mendoza en cualquier columna relevante
+                    mendoza_mask = False
+                    for col in df.columns:
+                        if df[col].dtype == object:
+                            mendoza_mask = mendoza_mask | df[col].astype(str).str.contains("Mendoza", case=False, na=False)
+                    df_mza = df[mendoza_mask]
+                    if not df_mza.empty:
+                        dfs.append(df_mza)
+                except Exception as e:
+                    logger.warning(f"Error leyendo {path}: {e}")
+        
+        if not dfs:
+            logger.warning("No se encontraron datos de Mendoza en los archivos descargados.")
+            return ""
+        
+        # Unir todos los DataFrames filtrados
+        df_final = pd.concat(dfs, ignore_index=True)
+        curated_dir = Path(directories["curated"])
+        output_path = curated_dir / "data_mendoza_unificado.csv"
+        df_final.to_csv(output_path, index=False)
+        logger.info(f"✅ Dataset unificado y filtrado guardado en: {output_path}")
+        return str(output_path)
+    except Exception as e:
+        logger.error(f"❌ Error unificando y filtrando datos: {e}")
+        return ""
+
 # ─── DAG Definition Final ──────────────────────────────────────────────────────
 
 with DAG(
@@ -590,14 +636,19 @@ with DAG(
             # Descarga directa de CSV
             download_task = download_direct_csv(spec=spec, directories=dirs)
             all_downloads.append(download_task)
-            
         elif spec["type"] == "dataset_page_scraping":
-            # Scraping + descarga múltiple
+            # Usar la nueva función para ETI
             scraping_task = scrape_and_download_csvs(spec=spec, directories=dirs)
             all_downloads.append(scraping_task)
     
     # 3. Validación de calidad de todos los datos
     data_validation = validate_downloaded_data(
+        all_downloads=all_downloads,
+        directories=dirs
+    )
+    
+    # Nueva tarea: unificación y filtrado Mendoza
+    mza_unificado = unify_and_filter_mendoza(
         all_downloads=all_downloads,
         directories=dirs
     )
@@ -609,4 +660,4 @@ with DAG(
     )
     
     # Dependencias del pipeline
-    dirs >> all_downloads >> data_validation >> final_report
+    dirs >> all_downloads >> data_validation >> mza_unificado >> final_report

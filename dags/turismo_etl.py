@@ -28,7 +28,9 @@ except ImportError:
 
 # ─── Configuración ─────────────────────────────────────────────────────────────
 
-AIRFLOW_HOME = Path(os.getenv("AIRFLOW_HOME", "/usr/local/airflow"))
+# FORZAR RUTA LOCAL PARA WINDOWS
+# Para compatibilidad con Docker/Astro CLI, usa la ruta del contenedor
+AIRFLOW_HOME = Path("/usr/local/airflow")
 DATA_ROOT = AIRFLOW_HOME / "data"
 CONFIG_PATH = AIRFLOW_HOME / "include/config/sources.yaml"
 
@@ -546,7 +548,7 @@ def unify_and_filter_mendoza(
     all_downloads: List[Any],
     directories: Dict[str, str]
 ) -> str:
-    """Une todos los CSV descargados y filtra solo datos de Mendoza."""
+    """Une todos los CSV descargados y filtra solo datos de Mendoza. Además, selecciona y documenta las variables relevantes para el modelo."""
     try:
         # Aplanar lista de descargas
         files = []
@@ -570,6 +572,15 @@ def unify_and_filter_mendoza(
                             mendoza_mask = mendoza_mask | df[col].astype(str).str.contains("Mendoza", case=False, na=False)
                     df_mza = df[mendoza_mask]
                     if not df_mza.empty:
+                        # Selección de variables relevantes
+                        variables_relevantes = [
+                            col for col in df_mza.columns if col.lower() in [
+                                "demanda_hotelera", "precio_dolar", "turistas_no_residentes", "mes", "anio"]
+                        ]
+                        # Si no existen, incluir las más informativas
+                        if not variables_relevantes:
+                            variables_relevantes = [col for col in df_mza.columns if col.lower() in ["fecha", "valor", "mes", "anio"]]
+                        df_mza = df_mza[variables_relevantes] if variables_relevantes else df_mza
                         dfs.append(df_mza)
                 except Exception as e:
                     logger.warning(f"Error leyendo {path}: {e}")
@@ -584,6 +595,8 @@ def unify_and_filter_mendoza(
         output_path = curated_dir / "data_mendoza_unificado.csv"
         df_final.to_csv(output_path, index=False)
         logger.info(f"✅ Dataset unificado y filtrado guardado en: {output_path}")
+        # Documentar variables seleccionadas
+        logger.info(f"Variables seleccionadas para el modelo: {list(df_final.columns)}")
         return str(output_path)
     except Exception as e:
         logger.error(f"❌ Error unificando y filtrando datos: {e}")

@@ -20,10 +20,9 @@ scipy
 
 # Machine Learning CPU-only (sin GPU dependencies problemáticas)
 scikit-learn
+statsmodels
+xgboost
 
-# Para futuras entregas (comentado para evitar problemas)
-# xgboost  # Causa problemas con nvidia-nccl-cu12
-# statsmodels  # Puede tener dependencies pesadas
 # prophet  # Dependencies complejas
 
 # Utilidades adicionales

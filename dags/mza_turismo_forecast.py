@@ -43,7 +43,7 @@ with DAG(
     dag_id="mza_turismo_forecast",
     default_args=default_args,
     description="Pronóstico de demanda hotelera en Mendoza: carga de modelo, forecast y persistencia",
-    schedule_interval="0 7 10 * *",
+    schedule="0 7 10 * *",  # <-- Cambia aquí
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,

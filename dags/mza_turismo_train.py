@@ -16,6 +16,7 @@ from xgboost import XGBRegressor
 
 from airflow import DAG
 from airflow.decorators import task
+from airflow.operators.python import get_current_context
 from airflow.models import Variable
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.utils.email import send_email
@@ -49,7 +50,7 @@ with DAG(
     dag_id="mza_turismo_train",
     description="Entrenamiento y selección de modelo de demanda hotelera en Mendoza",
     default_args=default_args,
-    schedule_interval=None,
+    schedule=None,  # <-- Cambia aquí
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
@@ -120,8 +121,9 @@ with DAG(
         return best
 
     @task(trigger_rule=TriggerRule.ONE_FAILED)
-    def notify_failure(context) -> None:
+    def notify_failure() -> None:
         """Envía un correo si falla alguna tarea de entrenamiento."""
+        context = get_current_context()
         subject = f"DAG {context['dag'].dag_id} FALLÓ en {context['task_instance_key_str']}"
         html_content = f"""
         <p>DAG: {context['dag'].dag_id}</p>

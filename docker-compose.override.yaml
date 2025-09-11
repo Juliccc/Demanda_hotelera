@@ -1,13 +1,13 @@
 services:
   scheduler:
     volumes:
-      - ./data:/usr/local/airflow/data
+      - .:/usr/local/airflow
     user: "astro:astro"
   webserver:
     volumes:
-      - ./data:/usr/local/airflow/data
+      - .:/usr/local/airflow
     user: "astro:astro"
   triggerer:
     volumes:
-      - ./data:/usr/local/airflow/data
+      - .:/usr/local/airflow
     user: "astro:astro"

@@ -28,8 +28,6 @@ except ImportError:
 
 # ─── Configuración ─────────────────────────────────────────────────────────────
 
-# FORZAR RUTA LOCAL PARA WINDOWS
-# Para compatibilidad con Docker/Astro CLI, usa la ruta del contenedor
 AIRFLOW_HOME = Path("/usr/local/airflow")
 DATA_ROOT = AIRFLOW_HOME / "data"
 CONFIG_PATH = AIRFLOW_HOME / "include/config/sources.yaml"
@@ -46,11 +44,11 @@ def get_variable(key: str, default: str) -> str:
 
 ALERT_EMAIL = get_variable("turismo_alert_email", "alerts@proyecto.edu")
 
-# ─── Carga de configuración compatible con tu sources.yaml ─────────────────────
+# ─── Carga de configuración expandida ──────────────────────────────────────────
 
 @lru_cache(maxsize=1)
 def load_config() -> dict:
-    """Carga configuración específica para tu estructura de sources.yaml."""
+    """Carga configuración expandida con fallbacks."""
     try:
         if not CONFIG_PATH.exists():
             logger.error(f"Archivo de configuración no encontrado: {CONFIG_PATH}")
@@ -65,12 +63,12 @@ def load_config() -> dict:
         logger.error(f"Error crítico cargando configuración: {e}")
         raise AirflowException(f"Configuration load failed: {e}")
 
-def build_download_specs(cfg: dict) -> List[Dict[str, Any]]:
-    """Construye especificaciones de descarga basadas en tu sources.yaml exacto."""
+def build_enhanced_download_specs(cfg: dict) -> List[Dict[str, Any]]:
+    """Construye especificaciones expandidas incluyendo nuevas fuentes."""
     specs = []
     defaults = cfg.get("defaults", {})
     
-    # 1. open_data_mza - CSV directo
+    # 1. Fuentes turísticas originales
     open_data_config = cfg.get("open_data_mza", {})
     if open_data_config:
         api_url = open_data_config.get("api_url")
@@ -81,11 +79,11 @@ def build_download_specs(cfg: dict) -> List[Dict[str, Any]]:
                 "url": api_url,
                 "type": "direct_csv",
                 "min_bytes": open_data_config.get("min_bytes", 5000),
-                "description": "Turismo Internacional - Total País (YVERA)"
+                "description": "Turismo Internacional - Total País (YVERA)",
+                "category": "turismo"
             })
             logger.info("✅ Open Data Mendoza spec configurado")
     
-    # 2. eti - Dataset page con scraping dinámico
     eti_config = cfg.get("eti", {})
     if eti_config and eti_config.get("dynamic_scraping", False):
         dataset_url = eti_config.get("dataset_url")
@@ -96,9 +94,76 @@ def build_download_specs(cfg: dict) -> List[Dict[str, Any]]:
                 "url": dataset_url,
                 "type": "dataset_page_scraping",
                 "min_bytes": eti_config.get("min_bytes", 10000),
-                "description": "Encuesta Turismo Internacional (ETI)"
+                "description": "Encuesta Turismo Internacional (ETI)",
+                "category": "turismo"
             })
             logger.info("✅ ETI scraping spec configurado")
+    
+    # 2. Variables económicas - BCRA
+    bcra_usd_config = cfg.get("bcra_usd", {})
+    if bcra_usd_config:
+        api_url = bcra_usd_config.get("api_url")
+        if api_url:
+            specs.append({
+                "src": "bcra",
+                "name": "cotizacion_usd_historica.json",
+                "url": api_url,
+                "type": "api_json",
+                "min_bytes": bcra_usd_config.get("min_bytes", 1000),
+                "description": "Cotización USD oficial BCRA",
+                "category": "economico",
+                "headers": bcra_usd_config.get("headers", {})
+            })
+            logger.info("✅ BCRA USD spec configurado")
+    
+    bcra_inflation_config = cfg.get("bcra_inflation", {})
+    if bcra_inflation_config:
+        api_url = bcra_inflation_config.get("api_url")
+        if api_url:
+            specs.append({
+                "src": "bcra",
+                "name": "inflacion_mensual.json", 
+                "url": api_url,
+                "type": "api_json",
+                "min_bytes": bcra_inflation_config.get("min_bytes", 1000),
+                "description": "Inflación mensual BCRA",
+                "category": "economico",
+                "headers": bcra_inflation_config.get("headers", {})
+            })
+            logger.info("✅ BCRA Inflación spec configurado")
+    
+    # 3. Datos INDEC adicionales
+    indec_pib_config = cfg.get("indec_pib", {})
+    if indec_pib_config:
+        api_url = indec_pib_config.get("api_url")
+        if api_url:
+            specs.append({
+                "src": "indec",
+                "name": "pib_mensual.json",
+                "url": api_url, 
+                "type": "api_json",
+                "min_bytes": indec_pib_config.get("min_bytes", 2000),
+                "description": "PIB mensual Argentina",
+                "category": "economico"
+            })
+            logger.info("✅ INDEC PIB spec configurado")
+    
+    # 4. Alojamiento específico Mendoza
+    alojamiento_config = cfg.get("alojamiento_mendoza", {})
+    if alojamiento_config:
+        api_url = alojamiento_config.get("api_url")
+        if api_url:
+            specs.append({
+                "src": "alojamiento",
+                "name": "establecimientos_mendoza.csv",
+                "url": api_url,
+                "type": "direct_csv", 
+                "min_bytes": alojamiento_config.get("min_bytes", 10000),
+                "description": "Establecimientos alojamiento Mendoza",
+                "category": "infraestructura",
+                "filter_province": alojamiento_config.get("filter_province", "Mendoza")
+            })
+            logger.info("✅ Alojamiento Mendoza spec configurado")
     
     logger.info(f"📋 Total especificaciones generadas: {len(specs)}")
     return specs
@@ -106,9 +171,10 @@ def build_download_specs(cfg: dict) -> List[Dict[str, Any]]:
 # Cargar configuración al inicio
 try:
     CFG = load_config()
-    DOWNLOAD_SPECS = build_download_specs(CFG)
+    DOWNLOAD_SPECS = build_enhanced_download_specs(CFG)
     VALIDATION_CONFIG = CFG.get("validation", {})
     DEFAULTS_CONFIG = CFG.get("defaults", {})
+    AGGREGATION_CONFIG = CFG.get("aggregation", {})
 except Exception as e:
     logger.error(f"Error crítico en inicialización: {e}")
     raise
@@ -122,44 +188,41 @@ default_args = {
     "email_on_retry": False,
     "retries": DEFAULTS_CONFIG.get("max_retries", 3),
     "retry_delay": timedelta(minutes=5),
-    "execution_timeout": timedelta(seconds=DEFAULTS_CONFIG.get("timeout_seconds", 120) * 5),
+    "execution_timeout": timedelta(seconds=DEFAULTS_CONFIG.get("timeout_seconds", 180) * 3),
 }
 
-# ─── Tareas del Pipeline ───────────────────────────────────────────────────────
+# ─── Tareas expandidas del Pipeline ────────────────────────────────────────────
 
 @task(pool="default_pool")
-def create_directories(ds: str) -> Dict[str, str]:
-    """Crea estructura de directorios para la fecha de ejecución."""
+def create_enhanced_directories(ds: str) -> Dict[str, str]:
+    """Crea estructura de directorios expandida."""
     try:
         base_path = DATA_ROOT / ds
         
-        # Estructura principal
         directories = {
             "base": base_path,
             "raw": base_path / "raw",
             "curated": base_path / "curated", 
+            "processed": base_path / "processed",  # Nuevo
+            "aggregated": base_path / "aggregated",  # Nuevo
+            "features": base_path / "features",  # Nuevo
             "logs": base_path / "logs",
             "reports": base_path / "reports"
         }
         
-        # Subdirectorios por fuente
-        for spec in DOWNLOAD_SPECS:
-            src = spec["src"]
-            directories["raw"] = directories["raw"]
-            directories["curated"] = directories["curated"] 
-            
-            # Crear subdirectorios específicos
-            (directories["raw"] / src).mkdir(parents=True, exist_ok=True)
-            (directories["curated"] / src).mkdir(parents=True, exist_ok=True)
+        # Subdirectorios por categoría
+        categories = ["turismo", "economico", "infraestructura", "climatico"]
+        for category in categories:
+            for dir_type in ["raw", "curated", "processed"]:
+                (directories[dir_type] / category).mkdir(parents=True, exist_ok=True)
         
         # Crear todos los directorios principales
         for dir_path in directories.values():
             dir_path.mkdir(parents=True, exist_ok=True)
         
-        # Convertir a strings para serialización
         dir_strings = {key: str(path) for key, path in directories.items()}
         
-        logger.info(f"✅ Estructura de directorios creada para {ds}")
+        logger.info(f"✅ Estructura expandida creada para {ds}")
         return dir_strings
         
     except Exception as e:
@@ -167,55 +230,47 @@ def create_directories(ds: str) -> Dict[str, str]:
         raise AirflowException(f"Directory creation failed: {e}")
 
 @task(execution_timeout=timedelta(minutes=10))
-def download_direct_csv(
+def download_direct_csv_enhanced(
     spec: Dict[str, Any],
     directories: Dict[str, str]
 ) -> Dict[str, Any]:
-    """Descarga un archivo CSV directamente desde una URL."""
+    """Descarga CSV con categorización."""
     try:
         src = spec["src"]
         name = spec["name"] 
         url = spec["url"]
         min_bytes = spec["min_bytes"]
+        category = spec.get("category", "general")
         
-        raw_dir = Path(directories["raw"]) / src
+        raw_dir = Path(directories["raw"]) / category
         dest_path = raw_dir / name
         
         logger.info(f"📥 Descargando {spec['description']}: {name}")
         
-        # Verificar si ya existe
         if dest_path.exists() and dest_path.stat().st_size >= min_bytes:
             size = dest_path.stat().st_size
             logger.info(f"✅ Archivo existente válido: {size:,} bytes")
             return {
                 "src": src, "name": name, "path": str(dest_path),
                 "size": size, "status": "cached", "url": url,
-                "description": spec["description"]
+                "description": spec["description"], "category": category
             }
         
-        # Headers para evitar bloqueos
         headers = {
-            'User-Agent': 'Mozilla/5.0 (compatible; TurismoDataPipeline/1.0)',
+            'User-Agent': 'Mozilla/5.0 (compatible; TurismoDataPipeline/2.0)',
             'Accept': 'text/csv,application/csv,text/plain,*/*',
             'Accept-Language': 'es-AR,es;q=0.9,en;q=0.8',
         }
         
-        # Descarga con timeout y SSL válido
         chunk_size = DEFAULTS_CONFIG.get("chunk_size", 8192)
-        timeout = DEFAULTS_CONFIG.get("timeout_seconds", 120)
+        timeout = DEFAULTS_CONFIG.get("timeout_seconds", 180)
         
         with requests.Session() as session:
             session.headers.update(headers)
             
-            response = session.get(
-                url,
-                timeout=timeout,
-                stream=True,
-                verify=False
-            )
+            response = session.get(url, timeout=timeout, stream=True, verify=False)
             response.raise_for_status()
             
-            # Escribir archivo por chunks
             total_size = 0
             with open(dest_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=chunk_size):
@@ -223,7 +278,6 @@ def download_direct_csv(
                         f.write(chunk)
                         total_size += len(chunk)
         
-        # Validar tamaño mínimo
         if total_size < min_bytes:
             dest_path.unlink()
             raise ValueError(f"Archivo muy pequeño: {total_size} < {min_bytes} bytes")
@@ -233,7 +287,7 @@ def download_direct_csv(
         return {
             "src": src, "name": name, "path": str(dest_path),
             "size": total_size, "status": "downloaded", "url": url,
-            "description": spec["description"]
+            "description": spec["description"], "category": category
         }
         
     except Exception as e:
@@ -242,15 +296,75 @@ def download_direct_csv(
             "src": spec.get("src", "unknown"),
             "name": spec.get("name", "unknown"),
             "path": "", "size": 0, "status": "error",
-            "url": spec.get("url", ""), "error": str(e)[:200]
+            "url": spec.get("url", ""), "error": str(e)[:200],
+            "category": spec.get("category", "unknown")
+        }
+
+@task(execution_timeout=timedelta(minutes=12))
+def download_api_json(
+    spec: Dict[str, Any],
+    directories: Dict[str, str]
+) -> Dict[str, Any]:
+    """Nueva función para descargar datos JSON de APIs."""
+    try:
+        src = spec["src"]
+        name = spec["name"]
+        url = spec["url"]
+        category = spec.get("category", "general")
+        
+        raw_dir = Path(directories["raw"]) / category
+        dest_path = raw_dir / name
+        
+        logger.info(f"🔗 Descargando API {spec['description']}: {name}")
+        
+        headers = spec.get("headers", {})
+        headers.update({
+            'User-Agent': 'TurismoDataPipeline/2.0',
+            'Accept': 'application/json'
+        })
+        
+        timeout = DEFAULTS_CONFIG.get("timeout_seconds", 180)
+        
+        response = requests.get(url, headers=headers, timeout=timeout, verify=False)
+        response.raise_for_status()
+        
+        # Validar que sea JSON válido
+        try:
+            json_data = response.json()
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Respuesta no es JSON válido: {e}")
+        
+        # Guardar JSON
+        with open(dest_path, 'w', encoding='utf-8') as f:
+            json.dump(json_data, f, indent=2, ensure_ascii=False)
+        
+        file_size = dest_path.stat().st_size
+        
+        logger.info(f"✅ API descargada: {name} - {file_size:,} bytes")
+        
+        return {
+            "src": src, "name": name, "path": str(dest_path),
+            "size": file_size, "status": "downloaded", "url": url,
+            "description": spec["description"], "category": category,
+            "data_type": "json", "records_count": len(json_data) if isinstance(json_data, list) else 1
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error descargando API {spec.get('name', 'unknown')}: {e}")
+        return {
+            "src": spec.get("src", "unknown"),
+            "name": spec.get("name", "unknown"),
+            "path": "", "size": 0, "status": "error",
+            "url": spec.get("url", ""), "error": str(e)[:200],
+            "category": spec.get("category", "unknown")
         }
 
 @task(execution_timeout=timedelta(minutes=15))
-def scrape_and_download_csvs(
+def scrape_and_download_csvs_enhanced(
     spec: Dict[str, Any],
     directories: Dict[str, str]
 ) -> List[Dict[str, Any]]:
-    """Hace scraping de una página de dataset y descarga los CSVs encontrados."""
+    """Scraping mejorado con categorización."""
     if not BS4_AVAILABLE:
         logger.error("BeautifulSoup4 no disponible - scraping deshabilitado")
         return [{
@@ -262,10 +376,10 @@ def scrape_and_download_csvs(
         src = spec["src"]
         dataset_url = spec["url"]
         min_bytes = spec["min_bytes"]
+        category = spec.get("category", "general")
         
         logger.info(f"🔍 Scraping CSV links desde: {dataset_url}")
         
-        # Headers anti-bot
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -274,22 +388,13 @@ def scrape_and_download_csvs(
             'Connection': 'keep-alive',
         }
         
-        # Obtener HTML de la página
-        response = requests.get(
-            dataset_url,
-            headers=headers,
-            timeout=60,
-            verify=certifi.where()
-        )
+        response = requests.get(dataset_url, headers=headers, timeout=90, verify=False)
         response.raise_for_status()
         
-        # Parsear HTML
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Buscar enlaces CSV con múltiples estrategias
         csv_urls = set()
         
-        # Estrategia 1: Enlaces que terminan en .csv
         for link in soup.find_all('a', href=True):
             href = link['href']
             if href.endswith('.csv'):
@@ -299,7 +404,6 @@ def scrape_and_download_csvs(
                     from urllib.parse import urljoin
                     csv_urls.add(urljoin(dataset_url, href))
         
-        # Estrategia 2: Enlaces con texto "CSV" o "csv"
         for link in soup.find_all('a', href=True):
             link_text = link.get_text().lower()
             if 'csv' in link_text:
@@ -311,7 +415,7 @@ def scrape_and_download_csvs(
                         from urllib.parse import urljoin
                         csv_urls.add(urljoin(dataset_url, href))
         
-        csv_list = list(csv_urls)[:10]  # Limitar a 10 archivos máximo
+        csv_list = list(csv_urls)[:12]  # Aumentado límite
         
         logger.info(f"📊 Encontrados {len(csv_list)} enlaces CSV para descargar")
         
@@ -320,21 +424,18 @@ def scrape_and_download_csvs(
             return [{
                 "src": src, "name": "no_csvs_found",
                 "status": "warning", "url": dataset_url,
-                "message": "No CSV links found on page"
+                "message": "No CSV links found on page", "category": category
             }]
         
-        # Descargar cada CSV encontrado
         results = []
-        raw_dir = Path(directories["raw"]) / src
+        raw_dir = Path(directories["raw"]) / category
         
         for i, csv_url in enumerate(csv_list, 1):
             try:
-                # Generar nombre de archivo
                 csv_name = csv_url.split('/')[-1]
                 if not csv_name.endswith('.csv'):
                     csv_name = f"eti_dataset_{i}.csv"
                 
-                # Limpiar nombre de archivo
                 import re
                 csv_name = re.sub(r'[^\w\-_.]', '_', csv_name)
                 
@@ -342,17 +443,9 @@ def scrape_and_download_csvs(
                 
                 logger.info(f"📥 Descargando CSV {i}/{len(csv_list)}: {csv_name}")
                 
-                # Descargar archivo
-                csv_response = requests.get(
-                    csv_url,
-                    headers=headers,
-                    timeout=90,
-                    stream=True,
-                    verify=False
-                )
+                csv_response = requests.get(csv_url, headers=headers, timeout=120, stream=True, verify=False)
                 csv_response.raise_for_status()
                 
-                # Guardar archivo
                 total_size = 0
                 with open(dest_path, 'wb') as f:
                     for chunk in csv_response.iter_content(chunk_size=8192):
@@ -360,7 +453,6 @@ def scrape_and_download_csvs(
                             f.write(chunk)
                             total_size += len(chunk)
                 
-                # Validar tamaño (warning, no error)
                 status = "downloaded"
                 if total_size < min_bytes:
                     logger.warning(f"⚠️ Archivo pequeño {csv_name}: {total_size} bytes")
@@ -368,7 +460,8 @@ def scrape_and_download_csvs(
                 
                 results.append({
                     "src": src, "name": csv_name, "path": str(dest_path),
-                    "size": total_size, "status": status, "url": csv_url
+                    "size": total_size, "status": status, "url": csv_url,
+                    "category": category
                 })
                 
                 logger.info(f"✅ {csv_name}: {total_size:,} bytes")
@@ -378,7 +471,7 @@ def scrape_and_download_csvs(
                 results.append({
                     "src": src, "name": f"error_csv_{i}",
                     "status": "error", "url": csv_url,
-                    "error": str(e)[:150]
+                    "error": str(e)[:150], "category": category
                 })
         
         successful = len([r for r in results if r["status"].startswith("downloaded")])
@@ -393,17 +486,294 @@ def scrape_and_download_csvs(
             "name": "scraping_failed",
             "status": "error",
             "url": spec.get("url", ""),
-            "error": str(e)[:200]
+            "error": str(e)[:200],
+            "category": spec.get("category", "unknown")
         }]
 
 @task
-def validate_downloaded_data(
+def process_and_standardize_data(
     all_downloads: List[Any],
     directories: Dict[str, str]
 ) -> Dict[str, Any]:
-    """Valida la calidad de los datos descargados."""
+    """Procesa y estandariza todos los datos descargados con validaciones robustas."""
     try:
-        # Aplanar lista de descargas
+        files = []
+        for download in all_downloads:
+            if isinstance(download, list):
+                files.extend(download)
+            else:
+                files.append(download)
+        
+        processed_files = {
+            "turismo": [],
+            "economico": [], 
+            "infraestructura": [],
+            "general": []
+        }
+        
+        processed_dir = Path(directories["processed"])
+        
+        for file_info in files:
+            if not file_info.get("status", "").startswith("downloaded"):
+                continue
+            
+            path = file_info.get("path", "")
+            category = file_info.get("category", "general")
+            
+            try:
+                if path.endswith(".csv"):
+                    df = pd.read_csv(path, encoding='utf-8')
+                elif path.endswith(".json"):
+                    with open(path, 'r', encoding='utf-8') as f:
+                        json_data = json.load(f)
+                    
+                    # Validación para arrays de igual longitud
+                    if file_info.get("src") == "bcra":
+                        # BCRA API formato: {"results": [{"index":..., "value":...}, ...]}
+                        if isinstance(json_data, dict) and "results" in json_data:
+                            results = json_data["results"]
+                            dates = [item.get("index") for item in results if "index" in item]
+                            values = [item.get("value") for item in results if "value" in item]
+                            if len(dates) != len(values):
+                                logger.error(f"Arrays de diferente longitud en {file_info['name']}")
+                                continue
+                            df = pd.DataFrame({"fecha": dates, "valor": values})
+                        else:
+                            df = pd.DataFrame(json_data)
+                    elif file_info.get("src") == "indec":
+                        # INDEC API formato: {"data": [{...}]}
+                        if isinstance(json_data, dict) and "data" in json_data:
+                            df = pd.DataFrame(json_data["data"])
+                        else:
+                            df = pd.DataFrame(json_data)
+                    else:
+                        df = pd.DataFrame(json_data)
+                else:
+                    logger.warning(f"Tipo de archivo no soportado: {path}")
+                    continue
+                
+                # Estandarizar columnas de fecha
+                date_columns = ['fecha', 'date', 'periodo', 'period', 'index']
+                for col in df.columns:
+                    if isinstance(col, str) and col.lower() in date_columns:
+                        try:
+                            df[col] = pd.to_datetime(df[col])
+                            df = df.rename(columns={col: 'fecha_std'})
+                            break
+                        except Exception as e:
+                            logger.warning(f"Error convirtiendo columna {col} a fecha: {e}")
+                            continue
+
+                # Si las columnas son 0,1, renómbralas manualmente
+                if list(df.columns) == [0, 1]:
+                    df.columns = ['fecha_std', 'valor']
+            
+                # Filtrar datos de Mendoza si es relevante
+                if category in ["turismo", "infraestructura"]:
+                    mendoza_keywords = ["mendoza", "mza", "cuyo", "50"]  # Código INDEC Mendoza
+                    mendoza_mask = pd.Series([False] * len(df))
+                    
+                    for col in df.columns:
+                        if isinstance(col, str) and df[col].dtype == object:
+                            mendoza_mask = mendoza_mask | df[col].astype(str).str.contains(
+                                "|".join(mendoza_keywords), case=False, na=False
+                            )
+                    
+                    if mendoza_mask.any():
+                        df = df[mendoza_mask]
+                        logger.info(f"Filtrado Mendoza aplicado a {file_info['name']}: {len(df)} registros")
+                
+                # Guardar archivo procesado
+                output_path = processed_dir / category / f"processed_{file_info['name'].replace('.json', '.csv')}"
+                df.to_csv(output_path, index=False, encoding='utf-8')
+                
+                processed_files[category].append({
+                    "original_file": file_info["name"],
+                    "processed_path": str(output_path),
+                    "rows": len(df),
+                    "columns": len(df.columns),
+                    "has_date_column": 'fecha_std' in df.columns,
+                    "date_range": f"{df['fecha_std'].min()} - {df['fecha_std'].max()}" if 'fecha_std' in df.columns else "N/A"
+                })
+                
+                logger.info(f"✅ Procesado {category}/{file_info['name']}: {len(df)} filas")
+                
+            except Exception as e:
+                logger.error(f"❌ Error procesando {file_info['name']}: {e}")
+                continue
+        
+        # Log de archivos con fecha_std
+        for category, files in processed_files.items():
+            for file_info in files:
+                df = pd.read_csv(file_info["processed_path"])
+                logger.info(f"{file_info['original_file']} - filas: {len(df)}, tiene fecha_std: {'fecha_std' in df.columns}")
+        
+        # Resumen de procesamiento
+        summary = {
+            "timestamp": datetime.now().isoformat(),
+            "files_by_category": {cat: len(files) for cat, files in processed_files.items()},
+            "total_processed": sum(len(files) for files in processed_files.values()),
+            "processed_files": processed_files
+        }
+        
+        # Guardar resumen
+        summary_path = processed_dir / "processing_summary.json"
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"📊 Procesamiento completado: {summary['total_processed']} archivos")
+        
+        return summary
+        
+    except Exception as e:
+        logger.error(f"❌ Error en procesamiento de datos: {e}")
+        return {"error": str(e), "success": False}
+
+@task
+def create_monthly_features_matrix(
+    processing_summary: Dict[str, Any],
+    directories: Dict[str, str]
+) -> str:
+    """Crea matriz de features mensuales para el modelo predictivo."""
+    try:
+        if not processing_summary.get("success", True):
+            logger.error("No se puede crear matriz de features sin datos procesados")
+            return ""
+        
+        processed_dir = Path(directories["processed"])
+        features_dir = Path(directories["features"])
+        
+        # Diccionario para almacenar series temporales por categoría
+        time_series_data = {}
+        
+        # Procesar cada categoría de datos
+        for category, files in processing_summary.get("processed_files", {}).items():
+            category_data = []
+            
+            for file_info in files:
+                try:
+                    df = pd.read_csv(file_info["processed_path"])
+                    
+                    if 'fecha_std' in df.columns and not df.empty:
+                        df['fecha_std'] = pd.to_datetime(df['fecha_std'])
+                        
+                        # Agregar a nivel mensual
+                        df['anio_mes'] = df['fecha_std'].dt.to_period('M')
+                        
+                        # Identificar columnas numéricas para agregar
+                        numeric_cols = df.select_dtypes(include=['number']).columns
+                        
+                        if len(numeric_cols) > 0:
+                            monthly_agg = df.groupby('anio_mes')[numeric_cols].agg(['mean', 'sum', 'count']).reset_index()
+                            monthly_agg.columns = ['anio_mes'] + [f"{col[0]}_{col[1]}" for col in monthly_agg.columns[1:]]
+                            monthly_agg['fuente'] = file_info["original_file"]
+                            category_data.append(monthly_agg)
+                            
+                except Exception as e:
+                    logger.warning(f"Error agregando {file_info['processed_path']}: {e}")
+                    continue
+            
+            if category_data:
+                # Concatenar todos los datos de la categoría
+                category_df = pd.concat(category_data, ignore_index=True)
+                time_series_data[category] = category_df
+        
+        if not time_series_data:
+            logger.error("No se generaron datos de series temporales")
+            return ""
+        
+        # Crear matriz unificada
+        base_periods = None
+        unified_features = None
+        
+        for category, df in time_series_data.items():
+            if df.empty:
+                continue
+                
+            # Crear rango de períodos base
+            if base_periods is None:
+                min_period = df['anio_mes'].min()
+                max_period = df['anio_mes'].max()
+                base_periods = pd.period_range(start=min_period, end=max_period, freq='M')
+                unified_features = pd.DataFrame({'anio_mes': base_periods})
+            
+            # Agregar features de esta categoría
+            category_features = df.groupby('anio_mes').agg({
+                col: 'mean' for col in df.columns if col not in ['anio_mes', 'fuente']
+            }).reset_index()
+            
+            # Renombrar columnas con prefijo de categoría
+            category_features.columns = ['anio_mes'] + [f"{category}_{col}" for col in category_features.columns[1:]]
+            
+            # Merge con matriz unificada
+            unified_features = unified_features.merge(category_features, on='anio_mes', how='left')
+        
+        # Agregar variables derivadas
+        unified_features['anio'] = unified_features['anio_mes'].dt.year
+        unified_features['mes'] = unified_features['anio_mes'].dt.month
+        unified_features['trimestre'] = unified_features['anio_mes'].dt.quarter
+        
+        # Variables estacionales
+        unified_features['es_verano'] = unified_features['mes'].isin([12, 1, 2]).astype(int)
+        unified_features['es_otono'] = unified_features['mes'].isin([3, 4, 5]).astype(int)
+        unified_features['es_invierno'] = unified_features['mes'].isin([6, 7, 8]).astype(int)
+        unified_features['es_primavera'] = unified_features['mes'].isin([9, 10, 11]).astype(int)
+        
+        # Variables de eventos importantes
+        unified_features['mes_vendimia'] = (unified_features['mes'] == 3).astype(int)
+        unified_features['vacaciones_verano'] = unified_features['mes'].isin([12, 1, 2]).astype(int)
+        unified_features['vacaciones_invierno'] = (unified_features['mes'] == 7).astype(int)
+        
+        # Convertir anio_mes a string para compatibilidad
+        unified_features['anio_mes_str'] = unified_features['anio_mes'].astype(str)
+        
+        # Guardar matriz de features
+        features_path = features_dir / "monthly_features_matrix.csv"
+        unified_features.to_csv(features_path, index=False, encoding='utf-8')
+        
+        # Guardar metadata de features
+        features_metadata = {
+            "creation_timestamp": datetime.now().isoformat(),
+            "total_months": len(unified_features),
+            "date_range": f"{unified_features['anio_mes'].min()} - {unified_features['anio_mes'].max()}",
+            "total_features": len(unified_features.columns),
+            "feature_categories": {
+                "turismo": len([col for col in unified_features.columns if col.startswith('turismo_')]),
+                "economico": len([col for col in unified_features.columns if col.startswith('economico_')]),
+                "infraestructura": len([col for col in unified_features.columns if col.startswith('infraestructura_')]),
+                "temporal": len([col for col in unified_features.columns if col in ['anio', 'mes', 'trimestre']]),
+                "estacional": len([col for col in unified_features.columns if col.startswith('es_')]),
+                "eventos": len([col for col in unified_features.columns if 'vendimia' in col or 'vacaciones' in col])
+            },
+            "missing_data_percentage": round((unified_features.isnull().sum().sum() / (len(unified_features) * len(unified_features.columns))) * 100, 2),
+            "recommended_target_variables": [
+                "turismo_valor_mean",  # Para regresión
+                "infraestructura_ocupacion_mean"  # Si está disponible
+            ]
+        }
+        
+        metadata_path = features_dir / "features_metadata.json"
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(features_metadata, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Matriz de features creada: {len(unified_features)} meses x {len(unified_features.columns)} variables")
+        logger.info(f"Rango temporal: {features_metadata['date_range']}")
+        logger.info(f"Datos faltantes: {features_metadata['missing_data_percentage']}%")
+        
+        return str(features_path)
+        
+    except Exception as e:
+        logger.error(f"Error creando matriz de features: {e}")
+        return ""
+
+@task
+def validate_enhanced_data(
+    all_downloads: List[Any],
+    processing_summary: Dict[str, Any],
+    directories: Dict[str, str]
+) -> Dict[str, Any]:
+    """Validación mejorada incluyendo nuevas fuentes."""
+    try:
         files = []
         for download in all_downloads:
             if isinstance(download, list):
@@ -417,38 +787,73 @@ def validate_downloaded_data(
             "successful_files": 0,
             "failed_files": 0,
             "data_quality_issues": [],
-            "file_validations": []
+            "file_validations": [],
+            "category_summary": {
+                "turismo": {"files": 0, "status": "unknown"},
+                "economico": {"files": 0, "status": "unknown"}, 
+                "infraestructura": {"files": 0, "status": "unknown"},
+                "general": {"files": 0, "status": "unknown"}
+            }
         }
         
         enable_quality_checks = VALIDATION_CONFIG.get("enable_data_quality_checks", True)
         min_rows = VALIDATION_CONFIG.get("min_rows_per_table", 5)
         
         for file_info in files:
+            category = file_info.get("category", "general")
+            validation_results["category_summary"][category]["files"] += 1
+            
             file_validation = {
                 "file": file_info.get("name", "unknown"),
                 "src": file_info.get("src", "unknown"),
+                "category": category,
                 "status": file_info.get("status", "unknown"),
                 "size_mb": round(file_info.get("size", 0) / (1024*1024), 3)
             }
             
             if file_info.get("status", "").startswith("downloaded"):
                 validation_results["successful_files"] += 1
+                validation_results["category_summary"][category]["status"] = "ok"
                 
-                # Validación de calidad si está habilitada
                 if enable_quality_checks and file_info.get("path"):
                     try:
                         file_path = Path(file_info["path"])
-                        if file_path.exists() and file_path.suffix.lower() == '.csv':
-                            df = pd.read_csv(file_path, nrows=100)  # Solo primeras 100 filas para validación
+                        if file_path.exists():
+                            if file_path.suffix.lower() == '.csv':
+                                df = pd.read_csv(file_path, nrows=100)
+                            elif file_path.suffix.lower() == '.json':
+                                with open(file_path, 'r') as f:
+                                    json_data = json.load(f)
+                                if isinstance(json_data, list):
+                                    df = pd.DataFrame(json_data[:100])
+                                else:
+                                    df = pd.DataFrame([json_data])
+                            else:
+                                continue
                             
                             file_validation.update({
-                                "rows_sampled": int(len(df)),  # Convertir a int nativo
-                                 "columns": int(len(df.columns)),  # Convertir a int nativo
-                                 "has_data": len(df) >= min_rows,
-                                 "empty_columns": int(df.isna().all().sum()),  # Convertir a int nativo
-                                 "data_quality": "good" if len(df) >= min_rows else "needs_review"
+                                "rows_sampled": int(len(df)),
+                                "columns": int(len(df.columns)),
+                                "has_data": len(df) >= min_rows,
+                                "empty_columns": int(df.isna().all().sum()),
+                                "data_quality": "good" if len(df) >= min_rows else "needs_review"
                             })
                             
+                            # Validaciones específicas por categoría
+                            if category == "economico":
+                                numeric_cols = df.select_dtypes(include=['number']).columns
+                                file_validation["numeric_columns"] = len(numeric_cols)
+                                if len(numeric_cols) == 0:
+                                    validation_results["data_quality_issues"].append(
+                                        f"{file_info['name']}: Datos económicos sin columnas numéricas"
+                                    )
+                            
+                            elif category == "turismo":
+                                # Buscar columnas relevantes para turismo
+                                tourism_keywords = ['turista', 'visitante', 'pernoctacion', 'ocupacion']
+                                relevant_cols = [col for col in df.columns if any(keyword in col.lower() for keyword in tourism_keywords)]
+                                file_validation["tourism_relevant_columns"] = len(relevant_cols)
+                                
                             if len(df) < min_rows:
                                 validation_results["data_quality_issues"].append(
                                     f"{file_info['name']}: Solo {len(df)} filas (mínimo: {min_rows})"
@@ -458,6 +863,8 @@ def validate_downloaded_data(
                         file_validation["validation_error"] = str(e)[:100]
             else:
                 validation_results["failed_files"] += 1
+                if validation_results["category_summary"][category]["status"] != "ok":
+                    validation_results["category_summary"][category]["status"] = "failed"
             
             validation_results["file_validations"].append(file_validation)
         
@@ -468,19 +875,43 @@ def validate_downloaded_data(
         else:
             validation_results["success_rate"] = 0.0
         
-        # Guardar resultados de validación
+        # Validar completitud por categoría
+        critical_categories = ["turismo", "economico"]
+        missing_critical = []
+        for category in critical_categories:
+            if validation_results["category_summary"][category]["files"] == 0:
+                missing_critical.append(category)
+        
+        if missing_critical:
+            validation_results["data_quality_issues"].extend([
+                f"Categoría crítica faltante: {cat}" for cat in missing_critical
+            ])
+        
+        # Evaluar readiness para modelo predictivo
+        validation_results["model_readiness"] = {
+            "has_tourism_data": validation_results["category_summary"]["turismo"]["files"] > 0,
+            "has_economic_data": validation_results["category_summary"]["economico"]["files"] > 0,
+            "overall_ready": (
+                validation_results["success_rate"] >= 70 and
+                len(missing_critical) == 0 and
+                len(validation_results["data_quality_issues"]) < 5
+            )
+        }
+        
+        # Guardar validación
         reports_dir = Path(directories["reports"])
-        validation_path = reports_dir / f"data_validation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        validation_path = reports_dir / f"enhanced_validation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         
         with open(validation_path, 'w', encoding='utf-8') as f:
             json.dump(validation_results, f, indent=2, ensure_ascii=False)
         
-        logger.info(f"📊 Validación completada: {validation_results['successful_files']}/{validation_results['total_files']} archivos exitosos ({validation_results['success_rate']}%)")
+        logger.info(f"Validación completada: {validation_results['successful_files']}/{validation_results['total_files']} archivos exitosos")
+        logger.info(f"Listo para modelo: {'SI' if validation_results['model_readiness']['overall_ready'] else 'NO'}")
         
         return validation_results
         
     except Exception as e:
-        logger.error(f"❌ Error en validación de datos: {e}")
+        logger.error(f"Error en validación de datos: {e}")
         return {
             "timestamp": datetime.now().isoformat(),
             "error": str(e),
@@ -488,189 +919,189 @@ def validate_downloaded_data(
         }
 
 @task
-def generate_pipeline_report(
+def generate_enhanced_pipeline_report(
     validation_results: Dict[str, Any],
+    processing_summary: Dict[str, Any],
+    features_path: str,
     directories: Dict[str, str]
 ) -> str:
-    """Genera el reporte final del pipeline."""
+    """Genera reporte final mejorado."""
     try:
-        # Reporte consolidado
         pipeline_report = {
             "pipeline_execution": {
                 "timestamp": datetime.now().isoformat(),
-                "dag_id": "mza_turismo_etl_final",
+                "dag_id": "mza_turismo_etl_enhanced",
                 "execution_date": directories["base"].split('/')[-1],
-                "status": "completed"
+                "status": "completed",
+                "version": "2.0"
             },
             "data_acquisition": validation_results,
+            "data_processing": processing_summary,
+            "feature_engineering": {
+                "features_matrix_created": bool(features_path),
+                "features_path": features_path,
+                "ready_for_modeling": validation_results.get("model_readiness", {}).get("overall_ready", False)
+            },
             "configuration_used": {
-                "sources": len(DOWNLOAD_SPECS),
+                "sources_configured": len(DOWNLOAD_SPECS),
                 "validation_enabled": VALIDATION_CONFIG.get("enable_data_quality_checks", True),
-                "timeout_seconds": DEFAULTS_CONFIG.get("timeout_seconds", 120)
+                "timeout_seconds": DEFAULTS_CONFIG.get("timeout_seconds", 180),
+                "aggregation_frequency": AGGREGATION_CONFIG.get("target_frequency", "monthly")
+            },
+            "data_summary": {
+                "categories_processed": list(processing_summary.get("files_by_category", {}).keys()) if processing_summary.get("success", True) else [],
+                "total_processed_files": processing_summary.get("total_processed", 0) if processing_summary.get("success", True) else 0,
+                "quality_issues": len(validation_results.get("data_quality_issues", [])),
+                "critical_data_available": {
+                    "tourism": validation_results.get("model_readiness", {}).get("has_tourism_data", False),
+                    "economic": validation_results.get("model_readiness", {}).get("has_economic_data", False)
+                }
             },
             "next_steps": [
-                "Datos listos para Análisis Exploratorio (Segunda Entrega - 01/10/2025)",
-                "Revisar archivos en directorio curated/",
-                "Ejecutar notebook de EDA sobre datasets descargados"
-            ]
+                "Dataset multi-dimensional listo para análisis exploratorio avanzado",
+                "Matriz de features mensuales disponible para modelado",
+                "Variables económicas y estacionales incorporadas",
+                "Preparar notebook para EDA con correlaciones entre variables",
+                "Implementar modelos de serie temporal (ARIMA, Prophet, LSTM)"
+            ],
+            "recommendations": []
         }
+        
+        # Generar recomendaciones basadas en resultados
+        if not pipeline_report["feature_engineering"]["ready_for_modeling"]:
+            pipeline_report["recommendations"].append("Revisar calidad de datos antes del modelado")
+        
+        if validation_results.get("success_rate", 0) < 80:
+            pipeline_report["recommendations"].append("Mejorar robustez de descarga de datos")
+        
+        if len(validation_results.get("data_quality_issues", [])) > 3:
+            pipeline_report["recommendations"].append("Implementar validaciones más estrictas")
+        
+        if not validation_results.get("model_readiness", {}).get("has_economic_data", False):
+            pipeline_report["recommendations"].append("Priorizar incorporación de variables económicas")
         
         # Guardar reporte final
         reports_dir = Path(directories["reports"])
-        report_path = reports_dir / f"pipeline_execution_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        report_path = reports_dir / f"enhanced_pipeline_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         
         with open(report_path, 'w', encoding='utf-8') as f:
             json.dump(pipeline_report, f, indent=2, ensure_ascii=False)
         
-        # Log resumen ejecutivo
+        # Log resumen ejecutivo mejorado
         success_rate = validation_results.get("success_rate", 0)
         total_files = validation_results.get("total_files", 0)
         successful_files = validation_results.get("successful_files", 0)
+        ready_for_model = pipeline_report["feature_engineering"]["ready_for_modeling"]
         
-        logger.info("=" * 60)
-        logger.info("🎯 PIPELINE DE TURISMO COMPLETADO")
-        logger.info("=" * 60)
-        logger.info(f"📊 Archivos procesados: {successful_files}/{total_files}")
-        logger.info(f"✅ Tasa de éxito: {success_rate}%")
-        logger.info(f"📁 Directorio de datos: {directories['base']}")
-        logger.info(f"📋 Reporte completo: {report_path.name}")
-        logger.info("🚀 LISTO PARA SEGUNDA ENTREGA - ANÁLISIS EXPLORATORIO")
-        logger.info("=" * 60)
+        logger.info("=" * 70)
+        logger.info("PIPELINE MEJORADO DE DEMANDA HOTELERA COMPLETADO")
+        logger.info("=" * 70)
+        logger.info(f"Archivos procesados: {successful_files}/{total_files} ({success_rate}%)")
+        logger.info(f"Categorías de datos: {', '.join(pipeline_report['data_summary']['categories_processed'])}")
+        logger.info(f"Features creados: {'SI' if features_path else 'NO'}")
+        logger.info(f"Listo para modelado: {'SI' if ready_for_model else 'NO'}")
+        logger.info(f"Variables económicas: {'SI' if pipeline_report['data_summary']['critical_data_available']['economic'] else 'NO'}")
+        logger.info(f"Directorio de datos: {directories['base']}")
+        logger.info(f"Reporte completo: {report_path.name}")
+        
+        if ready_for_model:
+            logger.info("LISTO PARA MODELADO PREDICTIVO AVANZADO")
+        else:
+            logger.info("REVISAR CALIDAD DE DATOS ANTES DE MODELADO")
+            
+        logger.info("=" * 70)
         
         return str(report_path)
         
     except Exception as e:
-        logger.error(f"❌ Error generando reporte final: {e}")
+        logger.error(f"Error generando reporte final: {e}")
         return f"Report generation failed: {e}"
 
-@task
-def unify_and_filter_mendoza(
-    all_downloads: List[Any],
-    directories: Dict[str, str]
-) -> str:
-    """Une todos los CSV descargados y filtra solo datos de Mendoza. Además, selecciona y documenta las variables relevantes para el modelo."""
-    try:
-        # Aplanar lista de descargas
-        files = []
-        for download in all_downloads:
-            if isinstance(download, list):
-                files.extend(download)
-            else:
-                files.append(download)
-        
-        dfs = []
-        for file_info in files:
-            path = file_info.get("path", "")
-            status = file_info.get("status", "")
-            if status.startswith("downloaded") and path.endswith(".csv"):
-                try:
-                    df = pd.read_csv(path)
-                    # Filtrar por Mendoza en cualquier columna relevante
-                    mendoza_mask = False
-                    for col in df.columns:
-                        if df[col].dtype == object:
-                            mendoza_mask = mendoza_mask | df[col].astype(str).str.contains("Mendoza", case=False, na=False)
-                    df_mza = df[mendoza_mask]
-                    if not df_mza.empty:
-                        # Selección de variables relevantes
-                        variables_relevantes = [
-                            col for col in df_mza.columns if col.lower() in [
-                                "demanda_hotelera", "precio_dolar", "turistas_no_residentes", "mes", "anio"]
-                        ]
-                        # Si no existen, incluir las más informativas
-                        if not variables_relevantes:
-                            variables_relevantes = [col for col in df_mza.columns if col.lower() in ["fecha", "valor", "mes", "anio"]]
-                        df_mza = df_mza[variables_relevantes] if variables_relevantes else df_mza
-                        dfs.append(df_mza)
-                except Exception as e:
-                    logger.warning(f"Error leyendo {path}: {e}")
-        
-        if not dfs:
-            logger.warning("No se encontraron datos de Mendoza en los archivos descargados.")
-            return ""
-        
-        # Unir todos los DataFrames filtrados
-        df_final = pd.concat(dfs, ignore_index=True)
-        curated_dir = Path(directories["curated"])
-        output_path = curated_dir / "data_mendoza_unificado.csv"
-        df_final.to_csv(output_path, index=False)
-        logger.info(f"✅ Dataset unificado y filtrado guardado en: {output_path}")
-        # Documentar variables seleccionadas
-        logger.info(f"Variables seleccionadas para el modelo: {list(df_final.columns)}")
-        return str(output_path)
-    except Exception as e:
-        logger.error(f"❌ Error unificando y filtrando datos: {e}")
-        return ""
-
-# ─── DAG Definition Final ──────────────────────────────────────────────────────
+# ─── DAG Definition Mejorado ───────────────────────────────────────────────────
 
 with DAG(
-    dag_id="mza_turismo_etl_final",
+    dag_id="mza_turismo_etl_enhanced",
     default_args=default_args,
-    description="🏨 Pipeline Final ETL - Demanda Hotelera Argentina (Primera Entrega)",
-    schedule="@monthly",  # Ejecución mensual
+    description="Pipeline ETL Mejorado - Predicción Demanda Hotelera Mendoza con Variables Económicas",
+    schedule="@monthly",
     start_date=datetime(2024, 8, 1),
     catchup=False,
     max_active_runs=1,
-    max_active_tasks=8,
-    tags=["argentina", "turismo", "primera-entrega", "final", "demo"],
+    max_active_tasks=10,
+    tags=["mendoza", "turismo", "economia", "features", "enhanced", "v2"],
     doc_md="""
-    ## 🏨 Pipeline ETL Final - Primera Entrega
+    ## Pipeline ETL Mejorado - Demanda Hotelera Mendoza
     
-    **Proyecto**: Predicción de Demanda Hotelera en Argentina
-    **Fecha de entrega**: 10/09/2025
-    **Estado**: Listo para demostración
+    **Versión 2.0** - Incluye variables económicas, procesamiento avanzado y feature engineering
     
-    ### Fuentes de datos configuradas:
-    - 📊 **YVERA**: Turismo Internacional Total País
-    - 🔍 **ETI**: Encuesta Turismo Internacional (scraping dinámico)
+    ### Fuentes de datos expandidas:
+    - **Turismo**: YVERA, ETI (datos turísticos oficiales)
+    - **Economía**: BCRA (USD, inflación), INDEC (PIB, empleo)
+    - **Infraestructura**: Establecimientos hoteleros Mendoza
+    - **Temporal**: Variables estacionales y eventos
     
-    ### Funcionalidades:
-    - ✅ Descarga automática de datos
-    - ✅ Validación de calidad
-    - ✅ Reportes detallados
-    - ✅ Manejo robusto de errores
+    ### Procesamiento avanzado:
+    - Estandarización de fechas y formatos
+    - Filtrado geográfico inteligente (Mendoza)
+    - Agregación mensual automática
+    - Creación de matriz de features para ML
     
-    ### Próximos pasos:
-    1. Ejecutar este DAG para obtener datos
-    2. Revisar reportes de calidad
-    3. Preparar notebook para análisis exploratorio
+    ### Salidas para modelado:
+    - Dataset multidimensional procesado
+    - Matriz de features mensuales
+    - Variables económicas y estacionales
+    - Metadata y reportes de calidad
+    
+    **Objetivo**: Base de datos robusta para modelo predictivo de demanda hotelera
     """,
 ) as dag:
 
-    # 1. Preparación del entorno
-    dirs = create_directories(ds="{{ ds }}")
-    
-    # 2. Procesar cada tipo de fuente según configuración
+    # 1. Preparación expandida
+    dirs = create_enhanced_directories(ds="{{ ds }}")
+
+    # 2. Descarga de datos por tipo
     all_downloads = []
-    
     for spec in DOWNLOAD_SPECS:
-        if spec["type"] == "direct_csv":
-            # Descarga directa de CSV
-            download_task = download_direct_csv(spec=spec, directories=dirs)
+        tipo = spec.get("type", "")
+        if tipo == "direct_csv":
+            download_task = download_direct_csv_enhanced(spec=spec, directories=dirs)
             all_downloads.append(download_task)
-        elif spec["type"] == "dataset_page_scraping":
-            # Usar la nueva función para ETI
-            scraping_task = scrape_and_download_csvs(spec=spec, directories=dirs)
+        elif tipo == "api_json":
+            api_task = download_api_json(spec=spec, directories=dirs)
+            all_downloads.append(api_task)
+        elif tipo == "dataset_page_scraping":
+            scraping_task = scrape_and_download_csvs_enhanced(spec=spec, directories=dirs)
             all_downloads.append(scraping_task)
-    
-    # 3. Validación de calidad de todos los datos
-    data_validation = validate_downloaded_data(
+        elif tipo == "manual":
+            # Eventos manuales: puedes procesarlos en la etapa de procesamiento
+            continue
+
+    # 3. Procesamiento y estandarización
+    processing_result = process_and_standardize_data(
         all_downloads=all_downloads,
         directories=dirs
     )
-    
-    # Nueva tarea: unificación y filtrado Mendoza
-    mza_unificado = unify_and_filter_mendoza(
+
+    # 4. Creación de matriz de features
+    features_matrix = create_monthly_features_matrix(
+        processing_summary=processing_result,
+        directories=dirs
+    )
+
+    # 5. Validación mejorada
+    enhanced_validation = validate_enhanced_data(
         all_downloads=all_downloads,
+        processing_summary=processing_result,
         directories=dirs
     )
-    
-    # 4. Reporte final del pipeline
-    final_report = generate_pipeline_report(
-        validation_results=data_validation,
+
+    # 6. Reporte final mejorado
+    final_enhanced_report = generate_enhanced_pipeline_report(
+        validation_results=enhanced_validation,
+        processing_summary=processing_result,
+        features_path=features_matrix,
         directories=dirs
     )
-    
-    # Dependencias del pipeline
-    dirs >> all_downloads >> data_validation >> mza_unificado >> final_report
+
+    # Dependencias del pipeline mejorado
+    dirs >> all_downloads >> processing_result >> features_matrix >> enhanced_validation >> final_enhanced_report

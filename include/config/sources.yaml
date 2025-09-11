@@ -1,59 +1,47 @@
-# include/config/sources.yaml - Expandido para modelo predictivo
+# include/config/sources.yaml - Versión estable (2025)
 
-# Fuentes originales (mantener)
+# -------------------------------
+# Turismo (Yvera)
+# -------------------------------
 open_data_mza:
-   dataset_name: "turismo-internacional-total-pais"
-   api_url: "https://datos.yvera.gob.ar/dataset/4cbf7d4a-702a-4911-8c1e-717a45214902/resource/fd710cb7-1981-43ea-aba3-7a14c356446b/download/turistas-residentes-serie.csv"
-   resource_format: "csv"
-   parse: false
-   min_bytes: 5000
+  dataset_name: "turismo-internacional-total-pais"
+  api_url: "https://datos.yvera.gob.ar/dataset/4cbf7d4a-702a-4911-8c1e-717a45214902/resource/fd710cb7-1981-43ea-aba3-7a14c356446b/download/turistas-residentes-serie.csv"
+  resource_format: "csv"
+  type: "direct_csv"
+  parse: false
+  min_bytes: 5000
 
 eti:
   dataset_name: "encuesta_turismo_internacional"
   dataset_url: "https://datos.gob.ar/dataset/turismo-encuesta-turismo-internacional-eti"
-  min_bytes: 10000
-  dynamic_scraping: true
   type: "dataset_page_scraping"
+  dynamic_scraping: true
+  min_bytes: 10000
 
-# NUEVAS FUENTES - Variables económicas críticas
+# -------------------------------
+# Variables económicas (Datos.gob.ar - API series)
+# -------------------------------
 bcra_usd:
   dataset_name: "cotizacion_usd_bcra"
-  api_url: "https://api.bcra.gob.ar/estadisticas/v2.0/DatosVariable/1/2020-01-01/2024-12-31"
-  description: "Cotización USD oficial BCRA"
+  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=168.1_T_CAMBIOR_D_0_0_26&start_date=2020-01-01&limit=5000"
+  description: "Cotización oficial del dólar (BCRA)"
   type: "api_json"
   min_bytes: 1000
-  headers:
-    Accept: "application/json"
   parse_json: true
-  date_column: "fecha"
-  value_column: "valor"
+  date_column: "index"
+  value_column: "value"
 
 bcra_inflation:
   dataset_name: "inflacion_mensual_bcra"
-  api_url: "https://api.bcra.gob.ar/estadisticas/v2.0/DatosVariable/31/2020-01-01/2024-12-31"
-  description: "Inflación mensual BCRA"
+  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=IPC_2016_NIVEL_GENERAL&start_date=2020-01-01&limit=5000"
+  description: "Inflación mensual (IPC INDEC)"
   type: "api_json"
   min_bytes: 1000
-  headers:
-    Accept: "application/json"
   parse_json: true
 
-# Variables climáticas (Mendoza específico)
-weather_mendoza:
-  dataset_name: "clima_mendoza_historico"
-  api_url: "https://api.openweathermap.org/data/2.5/onecall/timemachine"
-  description: "Datos climáticos históricos Mendoza"
-  type: "api_weather"
-  location:
-    lat: -32.8895
-    lon: -68.8458
-  api_key_variable: "OPENWEATHER_API_KEY"  # Variable de Airflow
-  enabled: false  # Requiere API key
-
-# Datos económicos adicionales - INDEC
 indec_pib:
   dataset_name: "pib_mensual_indec"
-  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=143.3_NO_PR_2004_A_21&limit=1000&sort=asc"
+  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=143.3_NO_PR_2004_A_21&start_date=2020-01-01&limit=5000"
   description: "PIB mensual Argentina"
   type: "api_json"
   min_bytes: 2000
@@ -61,12 +49,33 @@ indec_pib:
 
 indec_empleo:
   dataset_name: "tasa_desempleo_indec"
-  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=143.3_TL_0_M_26&limit=1000&sort=asc"
+  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=143.3_TL_0_M_26&start_date=2020-01-01&limit=5000"
   description: "Tasa de desempleo Argentina"
   type: "api_json"
   min_bytes: 1000
+  parse_json: true
 
-# Datos de conectividad aérea
+indec_pobreza:
+  dataset_name: "pobreza_indec"
+  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=148.3_I2NG_2016_M_22&start_date=2020-01-01&limit=5000"
+  description: "Pobreza e indigencia (estimadores)"
+  type: "api_json"
+  min_bytes: 1000
+  parse_json: true
+
+# -------------------------------
+# Clima Mendoza (SMN - CSV)
+# -------------------------------
+weather_mendoza:
+  dataset_name: "clima_mendoza_historico"
+  dataset_url: "https://cdn.smn.gob.ar/datos2/historicos/observaciones_mendoza.csv"
+  description: "Datos climáticos históricos Mendoza"
+  type: "direct_csv"
+  min_bytes: 5000
+
+# -------------------------------
+# Conectividad aérea (EANA - scraping)
+# -------------------------------
 conectividad_aerea:
   dataset_name: "vuelos_mendoza_eana"
   dataset_url: "https://datos.gob.ar/dataset/transporte-operaciones-aeroportuarias"
@@ -75,7 +84,9 @@ conectividad_aerea:
   min_bytes: 50000
   dynamic_scraping: true
 
-# Datos de alojamiento específicos Mendoza
+# -------------------------------
+# Alojamiento Mendoza (Yvera - CSV directo)
+# -------------------------------
 alojamiento_mendoza:
   dataset_name: "establecimientos_alojamiento_mendoza"
   api_url: "https://datos.yvera.gob.ar/dataset/sinta-establecimientos-alojamiento-turistico/resource/8fb1b651-7f2c-4b41-acb9-e94eea8e26a0/download/sinta_establecimientos_turisticos_alojamiento.csv"
@@ -84,12 +95,13 @@ alojamiento_mendoza:
   min_bytes: 10000
   filter_province: "Mendoza"
 
-# Eventos y festivales (datos estructurados)
+# -------------------------------
+# Eventos (manual)
+# -------------------------------
 eventos_mendoza:
   dataset_name: "eventos_turisticos_mendoza"
   manual_data: true
   description: "Eventos turísticos relevantes Mendoza"
-  # Estos se pueden hardcodear inicialmente:
   eventos_principales:
     - nombre: "Fiesta Nacional de la Vendimia"
       mes: 3
@@ -108,76 +120,12 @@ eventos_mendoza:
       impacto: "alto"
       duracion_dias: 15
 
-# Datos de precios de commodities (vino/petróleo)
-commodities:
-  dataset_name: "precios_commodities"
-  api_url: "https://api.worldbank.org/v2/country/ARG/indicator/PPGMT.AG?date=2020:2024&format=json"
-  description: "Precios de commodities - Banco Mundial"
-  type: "api_json"
-  enabled: false  # Opcional
-  min_bytes: 500
-
-# Datos demográficos y económicos Mendoza
+# -------------------------------
+# Demografía Mendoza (API Georef)
+# -------------------------------
 demografia_mendoza:
   dataset_name: "poblacion_mendoza_indec"
   api_url: "https://apis.datos.gob.ar/georef/api/provincias?nombre=Mendoza"
   description: "Datos demográficos Mendoza"
   type: "api_json"
   min_bytes: 500
-
-# Configuración de validación expandida
-validation:
-  enable_data_quality_checks: true
-  min_rows_per_table: 5
-  required_columns:
-    turismo: ["fecha", "valor", "periodo"]
-    economico: ["fecha", "cotizacion"]
-    climatico: ["fecha", "temperatura", "precipitacion"]
-  
-  # Validaciones específicas por tipo de dato
-  data_types:
-    temporal:
-      required_format: "%Y-%m-%d"
-      min_date: "2020-01-01"
-      max_date: "2024-12-31"
-    economico:
-      min_value: 0
-      max_inflation: 200  # % anual
-    turistico:
-      min_visitors: 0
-      logical_checks: true
-
-# Configuración para agregación temporal
-aggregation:
-  target_frequency: "monthly"  # Agregar todo a nivel mensual
-  target_columns:
-    - turistas_no_residentes_mendoza
-    - cotizacion_usd_promedio
-    - temperatura_promedio_celsius
-    - precipitacion_mm
-    - ocupacion_hotelera_pct
-    - eventos_grandes_cantidad
-    - pib_variacion_intermensual
-
-# Variables de entorno por defecto (expandidas)
-defaults:
-  timeout_seconds: 180  # Aumentado para APIs
-  max_retries: 3
-  chunk_size: 8192
-  
-  # APIs externas - configurar como Airflow Variables
-  api_keys:
-    openweather: "OPENWEATHER_API_KEY"
-    worldbank: "WORLDBANK_API_KEY"  # Opcional
-    
-  # Parámetros de filtrado
-  geographic_filters:
-    provincia_objetivo: "Mendoza"
-    aeropuertos_origen: ["EZE", "AEP", "COR", "MDZ"]
-    codigo_provincia: "50"  # Código INDEC Mendoza
-
-  # Configuración de agregación
-  date_ranges:
-    start_date: "2020-01-01"
-    end_date: "2024-12-31"
-    prediction_horizon: 12  # meses hacia adelante

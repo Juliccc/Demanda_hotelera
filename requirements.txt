@@ -1,6 +1,6 @@
-# requirements.txt - Optimizado para Primera Entrega (sin GPU dependencies)
+# requirements.txt - Actualizado para DAG mejorado
 
-# Core data processing (esencial para tu DAG)
+# Core data processing (mantener existente)
 pandas
 pyyaml
 requests
@@ -11,19 +11,48 @@ urllib3
 jsonschema
 chardet
 
-# Fechas y utilidades
+# Fechas y utilidades (mantener)
 python-dateutil
 
-# Análisis de datos básico
+# Análisis de datos básico (mantener)
 numpy
 scipy
 
-# Machine Learning CPU-only (sin GPU dependencies problemáticas)
+# Machine Learning (mantener)
 scikit-learn
 statsmodels
 xgboost
 
-# prophet  # Dependencies complejas
+# NUEVAS DEPENDENCIAS para el DAG mejorado:
 
-# Utilidades adicionales
+# Para manejo avanzado de fechas y períodos
+pandas-datareader>=0.10.0  # APIs financieras opcionales
+
+# Para validación de esquemas JSON mejorada
+cerberus>=1.3.4
+
+# Para logging estructurado (opcional pero recomendado)
+structlog>=22.1.0
+
+# Para manejo de timezone (importante para datos temporales)
+pytz>=2022.1
+
+# Para requests más robustos
+requests-cache>=0.9.0  # Cache de requests para APIs
+tenacity>=8.0.0        # Retry automático para APIs
+
+# Para procesamiento de series temporales
+# prophet  # Mantener comentado por ahora
+
+# Utilidades adicionales (mantener)
 pathlib
+
+# OPCIONALES (comentar si causan problemas):
+# Para análisis exploratorio futuro
+# matplotlib>=3.5.0
+# seaborn>=0.11.0
+
+# Para streamlit (Cuarta Entrega)
+# streamlit>=1.25.0
+# plotly>=5.15.0
+# altair>=5.0.0

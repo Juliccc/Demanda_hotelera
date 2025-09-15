@@ -129,3 +129,25 @@ demografia_mendoza:
   description: "Datos demográficos Mendoza"
   type: "api_json"
   min_bytes: 500
+
+# Para URLs que cambian mes a mes, agregá estas entradas:
+
+# Ejemplo para INDEC con URLs dinámicas
+indec_turismo_dinamico:
+  dataset_name: "turismo_indec_dinamico"
+  base_url: "https://www.indec.gob.ar/indec/web/Nivel4-Tema-4-35-61"
+  search_pattern: "turismo.*\\.csv$"
+  type: "dynamic_url"
+  fallback_type: "direct_csv"
+  min_bytes: 5000
+  description: "Datos turísticos INDEC con URL dinámica"
+
+# Ejemplo para datos que requieren scraping avanzado
+yvera_dinamico:
+  dataset_name: "yvera_establecimientos_dinamico"
+  base_url: "https://datos.yvera.gob.ar/dataset/sinta-establecimientos-alojamiento-turistico"
+  search_pattern: "mendoza.*\\.csv$|alojamiento.*mendoza.*\\.csv$"
+  type: "dynamic_url"
+  fallback_type: "dataset_page_scraping"
+  min_bytes: 10000
+  description: "Establecimientos Mendoza URL dinámica"

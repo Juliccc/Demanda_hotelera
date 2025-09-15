@@ -29,7 +29,9 @@ except ImportError:
 # ─── Configuración ─────────────────────────────────────────────────────────────
 
 AIRFLOW_HOME = Path("/usr/local/airflow")
-DATA_ROOT = AIRFLOW_HOME / "data"
+# Configurar para guardar en volumen montado (accesible desde máquina local)
+LOCAL_DATA_ROOT = Path("/opt/airflow/data_local")  # Volumen montado
+DATA_ROOT = LOCAL_DATA_ROOT if LOCAL_DATA_ROOT.exists() else AIRFLOW_HOME / "data"
 CONFIG_PATH = AIRFLOW_HOME / "include/config/sources.yaml"
 
 logger = logging.getLogger(__name__)
@@ -1017,6 +1019,151 @@ def generate_enhanced_pipeline_report(
         logger.error(f"Error generando reporte final: {e}")
         return f"Report generation failed: {e}"
 
+@task
+def resolve_dynamic_urls(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Resuelve URLs dinámicas que cambian mensualmente."""
+    try:
+        if spec.get("type") != "dynamic_url":
+            return spec
+        
+        base_url = spec.get("base_url", "")
+        search_pattern = spec.get("search_pattern", "")
+        
+        logger.info(f"🔍 Resolviendo URL dinámica para {spec['src']}")
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        # Estrategia 1: Buscar en página principal
+        response = requests.get(base_url, headers=headers, timeout=60)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Buscar enlaces que coincidan con el patrón
+        import re
+        pattern = re.compile(search_pattern)
+        
+        found_urls = []
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            if pattern.search(href):
+                if href.startswith('http'):
+                    found_urls.append(href)
+                else:
+                    from urllib.parse import urljoin
+                    found_urls.append(urljoin(base_url, href))
+        
+        if found_urls:
+            # Usar la URL más reciente (última en la lista)
+            resolved_url = sorted(found_urls)[-1]
+            spec_copy = spec.copy()
+            spec_copy["url"] = resolved_url
+            spec_copy["type"] = spec.get("fallback_type", "direct_csv")
+            logger.info(f"✅ URL resuelta: {resolved_url}")
+            return spec_copy
+        else:
+            logger.warning(f"⚠️ No se encontró URL para patrón: {search_pattern}")
+            return spec
+            
+    except Exception as e:
+        logger.error(f"❌ Error resolviendo URL dinámica: {e}")
+        return spec
+
+@task
+def create_unified_mendoza_dataset(
+    all_downloads: List[Any],
+    processing_summary: Dict[str, Any],
+    directories: Dict[str, str]
+) -> str:
+    """Crea dataset final unificado de Mendoza y lo guarda localmente."""
+    try:
+        logger.info("🏗️ Creando dataset unificado de Mendoza...")
+        
+        # Recopilar todos los archivos procesados
+        processed_files = processing_summary.get("processed_files", {})
+        all_mendoza_data = []
+        
+        for category, files in processed_files.items():
+            for file_info in files:
+                try:
+                    df = pd.read_csv(file_info["processed_path"])
+                    
+                    # Agregar metadatos
+                    df['categoria'] = category
+                    df['fuente'] = file_info['original_file']
+                    df['fecha_procesamiento'] = datetime.now().isoformat()
+                    
+                    # Solo incluir si tiene datos relevantes
+                    if not df.empty and len(df) > 5:
+                        all_mendoza_data.append(df)
+                        logger.info(f"✅ Incluido {file_info['original_file']}: {len(df)} registros")
+                    
+                except Exception as e:
+                    logger.warning(f"Error leyendo {file_info['processed_path']}: {e}")
+                    continue
+        
+        if not all_mendoza_data:
+            logger.error("No se encontraron datos para unificar")
+            return ""
+        
+        # Unificar todos los datasets
+        df_unified = pd.concat(all_mendoza_data, ignore_index=True, sort=False)
+        
+        # Limpiar y estandarizar
+        df_unified = df_unified.drop_duplicates()
+        
+        # Ordenar por fecha si existe
+        if 'fecha_std' in df_unified.columns:
+            df_unified = df_unified.sort_values('fecha_std')
+        
+        # Guardar en volumen local montado
+        local_data_dir = Path("/opt/airflow/data_local")
+        local_data_dir.mkdir(parents=True, exist_ok=True)
+        
+        output_path = local_data_dir / "mendoza_turismo_dataset_unificado.csv"
+        df_unified.to_csv(output_path, index=False, encoding='utf-8')
+        
+        # También guardar en curated para el pipeline
+        curated_path = Path(directories["curated"]) / "mendoza_dataset_final.csv"
+        df_unified.to_csv(curated_path, index=False, encoding='utf-8')
+        
+        # Crear resumen del dataset
+        dataset_summary = {
+            "creation_timestamp": datetime.now().isoformat(),
+            "total_records": len(df_unified),
+            "total_columns": len(df_unified.columns),
+            "date_range": f"{df_unified['fecha_std'].min()} - {df_unified['fecha_std'].max()}" if 'fecha_std' in df_unified.columns else "N/A",
+            "categories_included": df_unified['categoria'].unique().tolist(),
+            "sources_included": df_unified['fuente'].unique().tolist(),
+            "local_path": str(output_path),
+            "pipeline_path": str(curated_path),
+            "column_list": df_unified.columns.tolist(),
+            "data_types": df_unified.dtypes.astype(str).to_dict(),
+            "missing_data_summary": df_unified.isnull().sum().to_dict()
+        }
+        
+        summary_path = local_data_dir / "dataset_summary.json"
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(dataset_summary, f, indent=2, ensure_ascii=False)
+        
+        logger.info("=" * 60)
+        logger.info("📊 DATASET UNIFICADO CREADO EXITOSAMENTE")
+        logger.info("=" * 60)
+        logger.info(f"Registros totales: {len(df_unified):,}")
+        logger.info(f"Columnas: {len(df_unified.columns)}")
+        logger.info(f"Categorías: {', '.join(df_unified['categoria'].unique())}")
+        logger.info(f"Archivo local: {output_path}")
+        logger.info(f"Resumen: {summary_path}")
+        logger.info("=" * 60)
+        
+        return str(output_path)
+        
+    except Exception as e:
+        logger.error(f"❌ Error creando dataset unificado: {e}")
+        return ""
+
 # ─── DAG Definition Mejorado ───────────────────────────────────────────────────
 
 with DAG(
@@ -1055,13 +1202,24 @@ with DAG(
     **Objetivo**: Base de datos robusta para modelo predictivo de demanda hotelera
     """,
 ) as dag:
-
     # 1. Preparación expandida
     dirs = create_enhanced_directories(ds="{{ ds }}")
 
-    # 2. Descarga de datos por tipo
-    all_downloads = []
+    # 2. Resolver URLs dinámicas primero
+    resolved_specs = []
+    static_specs = []
     for spec in DOWNLOAD_SPECS:
+        if spec.get("type") == "dynamic_url":
+            resolved_task = resolve_dynamic_urls(spec=spec)
+            resolved_specs.append(resolved_task)
+        else:
+            static_specs.append(spec)
+
+    # 3. Descarga de datos por tipo
+    all_downloads = []
+    
+    # Procesar specs estáticas
+    for spec in static_specs:
         tipo = spec.get("type", "")
         if tipo == "direct_csv":
             download_task = download_direct_csv_enhanced(spec=spec, directories=dirs)
@@ -1072,30 +1230,39 @@ with DAG(
         elif tipo == "dataset_page_scraping":
             scraping_task = scrape_and_download_csvs_enhanced(spec=spec, directories=dirs)
             all_downloads.append(scraping_task)
-        elif tipo == "manual":
-            # Eventos manuales: puedes procesarlos en la etapa de procesamiento
-            continue
+    
+    # Procesar specs dinámicas resueltas
+    for resolved_spec in resolved_specs:
+        # Aquí necesitarías lógica adicional para procesar las specs resueltas
+        pass
 
-    # 3. Procesamiento y estandarización
+    # 4. Procesamiento y estandarización
     processing_result = process_and_standardize_data(
         all_downloads=all_downloads,
         directories=dirs
     )
 
-    # 4. Creación de matriz de features
+    # 5. Creación de matriz de features
     features_matrix = create_monthly_features_matrix(
         processing_summary=processing_result,
         directories=dirs
     )
 
-    # 5. Validación mejorada
+    # 6. Crear dataset unificado final (NUEVA TAREA)
+    unified_dataset = create_unified_mendoza_dataset(
+        all_downloads=all_downloads,
+        processing_summary=processing_result,
+        directories=dirs
+    )
+
+    # 7. Validación mejorada
     enhanced_validation = validate_enhanced_data(
         all_downloads=all_downloads,
         processing_summary=processing_result,
         directories=dirs
     )
 
-    # 6. Reporte final mejorado
+    # 8. Reporte final mejorado
     final_enhanced_report = generate_enhanced_pipeline_report(
         validation_results=enhanced_validation,
         processing_summary=processing_result,
@@ -1104,4 +1271,4 @@ with DAG(
     )
 
     # Dependencias del pipeline mejorado
-    dirs >> all_downloads >> processing_result >> features_matrix >> enhanced_validation >> final_enhanced_report
+    dirs >> all_downloads >> processing_result >> [features_matrix, unified_dataset] >> enhanced_validation >> final_enhanced_report

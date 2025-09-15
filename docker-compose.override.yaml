@@ -2,12 +2,15 @@ services:
   scheduler:
     volumes:
       - .:/usr/local/airflow
+      - ./data_local:/opt/airflow/data_local  # Volumen para CSV locales
     user: "astro:astro"
   webserver:
     volumes:
       - .:/usr/local/airflow
+      - ./data_local:/opt/airflow/data_local  # Volumen para CSV locales
     user: "astro:astro"
   triggerer:
     volumes:
       - .:/usr/local/airflow
+      - ./data_local:/opt/airflow/data_local  # Volumen para CSV locales
     user: "astro:astro"

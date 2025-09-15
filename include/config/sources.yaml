@@ -31,13 +31,6 @@ bcra_usd:
   date_column: "index"
   value_column: "value"
 
-bcra_inflation:
-  dataset_name: "inflacion_mensual_bcra"
-  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=IPC_2016_NIVEL_GENERAL&start_date=2020-01-01&limit=5000"
-  description: "Inflación mensual (IPC INDEC)"
-  type: "api_json"
-  min_bytes: 1000
-  parse_json: true
 
 indec_pib:
   dataset_name: "pib_mensual_indec"
@@ -84,16 +77,6 @@ conectividad_aerea:
   min_bytes: 50000
   dynamic_scraping: true
 
-# -------------------------------
-# Alojamiento Mendoza (Yvera - CSV directo)
-# -------------------------------
-alojamiento_mendoza:
-  dataset_name: "establecimientos_alojamiento_mendoza"
-  api_url: "https://datos.yvera.gob.ar/dataset/sinta-establecimientos-alojamiento-turistico/resource/8fb1b651-7f2c-4b41-acb9-e94eea8e26a0/download/sinta_establecimientos_turisticos_alojamiento.csv"
-  description: "Establecimientos de alojamiento turístico"
-  type: "direct_csv"
-  min_bytes: 10000
-  filter_province: "Mendoza"
 
 # -------------------------------
 # Eventos (manual)

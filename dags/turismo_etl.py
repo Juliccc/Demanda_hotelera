@@ -29,9 +29,8 @@ except ImportError:
 # ─── Configuración ─────────────────────────────────────────────────────────────
 
 AIRFLOW_HOME = Path("/usr/local/airflow")
-# Configurar para guardar en volumen montado (accesible desde máquina local)
-LOCAL_DATA_ROOT = Path("/opt/airflow/data_local")  # Volumen montado
-DATA_ROOT = LOCAL_DATA_ROOT if LOCAL_DATA_ROOT.exists() else AIRFLOW_HOME / "data"
+# Guardar todo en la carpeta 'data/raw' dentro del proyecto
+DATA_ROOT = AIRFLOW_HOME / "data" / "raw"
 CONFIG_PATH = AIRFLOW_HOME / "include/config/sources.yaml"
 
 logger = logging.getLogger(__name__)
@@ -88,18 +87,28 @@ def build_enhanced_download_specs(cfg: dict) -> List[Dict[str, Any]]:
     
     eti_config = cfg.get("eti", {})
     if eti_config and eti_config.get("dynamic_scraping", False):
-        dataset_url = eti_config.get("dataset_url")
-        if dataset_url:
-            specs.append({
-                "src": "eti", 
-                "name": "eti_dataset_page",
-                "url": dataset_url,
-                "type": "dataset_page_scraping",
-                "min_bytes": eti_config.get("min_bytes", 10000),
-                "description": "Encuesta Turismo Internacional (ETI)",
-                "category": "turismo"
-            })
-            logger.info("✅ ETI scraping spec configurado")
+        # En lugar de scraping, usar URLs directas de los CSVs específicos
+        specs.append({
+            "src": "eti_aeropuerto",
+            "name": "eti_mendoza_aeropuerto_turistas_no_residentes.csv",
+            "url": "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/c112ca01-2563-4a48-a8d6-1126af9a5f1d/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_aeropuerto_mendoza_trimes.csv",
+            "type": "direct_csv",
+            "min_bytes": eti_config.get("min_bytes", 10000),
+            "description": "ETI Mendoza - Aeropuerto - Turistas no residentes",
+            "category": "turismo"
+        })
+        
+        specs.append({
+            "src": "eti_cristo_redentor",
+            "name": "eti_mendoza_cristo_redentor_turistas_no_residentes.csv",
+            "url": "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/941a5faf-898d-47f5-b889-25e3919bc468/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_cristo_redentor_trimestra.csv",
+            "type": "direct_csv", 
+            "min_bytes": eti_config.get("min_bytes", 10000),
+            "description": "ETI Mendoza - Cristo Redentor - Turistas no residentes",
+            "category": "turismo"
+        })
+        
+        logger.info("✅ ETI URLs directas configuradas (Aeropuerto + Cristo Redentor)")
     
     # 2. Variables económicas - BCRA
     bcra_usd_config = cfg.get("bcra_usd", {})
@@ -366,7 +375,7 @@ def scrape_and_download_csvs_enhanced(
     spec: Dict[str, Any],
     directories: Dict[str, str]
 ) -> List[Dict[str, Any]]:
-    """Scraping mejorado con categorización."""
+    """Scraping mejorado ETI - enfocado en turistas no residentes Mendoza."""
     if not BS4_AVAILABLE:
         logger.error("BeautifulSoup4 no disponible - scraping deshabilitado")
         return [{
@@ -380,7 +389,13 @@ def scrape_and_download_csvs_enhanced(
         min_bytes = spec["min_bytes"]
         category = spec.get("category", "general")
         
-        logger.info(f"🔍 Scraping CSV links desde: {dataset_url}")
+        logger.info(f"🔍 Scraping ETI - Buscando CSVs específicos de Mendoza: {dataset_url}")
+        
+        # Archivos específicos que necesitamos
+        target_files = [
+            "turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_aeropuerto_mendoza_trimes",
+            "turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_cristo_redentor_trimestra"
+        ]
         
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -395,55 +410,81 @@ def scrape_and_download_csvs_enhanced(
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        csv_urls = set()
+        # Buscar específicamente los archivos que necesitamos
+        target_csv_urls = {}
         
+        # Estrategia 1: Buscar enlaces exactos
         for link in soup.find_all('a', href=True):
             href = link['href']
-            if href.endswith('.csv'):
-                if href.startswith('http'):
-                    csv_urls.add(href)
-                elif href.startswith('/'):
-                    from urllib.parse import urljoin
-                    csv_urls.add(urljoin(dataset_url, href))
+            link_text = link.get_text().strip()
+            
+            # Verificar si el enlace contiene alguno de nuestros archivos objetivo
+            for target_file in target_files:
+                if target_file in href.lower() or target_file in link_text.lower():
+                    if href.endswith('.csv'):
+                        if href.startswith('http'):
+                            target_csv_urls[target_file] = href
+                        elif href.startswith('/'):
+                            from urllib.parse import urljoin
+                            target_csv_urls[target_file] = urljoin(dataset_url, href)
+                        logger.info(f"✅ Encontrado archivo objetivo: {target_file}")
         
-        for link in soup.find_all('a', href=True):
-            link_text = link.get_text().lower()
-            if 'csv' in link_text:
+        # Estrategia 2: Buscar por palabras clave si no encontramos los exactos
+        if not target_csv_urls:
+            logger.info("🔍 Búsqueda exacta fallida, usando palabras clave...")
+            keywords = [
+                ["turistas", "no_residentes", "mendoza", "aeropuerto"],
+                ["turistas", "no_residentes", "cristo", "redentor"],
+                ["mendoza", "aeropuerto", "trimestral"],
+                ["cristo_redentor", "trimestral"]
+            ]
+            
+            for link in soup.find_all('a', href=True):
                 href = link['href']
-                if '.csv' in href:
-                    if href.startswith('http'):
-                        csv_urls.add(href)
-                    elif href.startswith('/'):
-                        from urllib.parse import urljoin
-                        csv_urls.add(urljoin(dataset_url, href))
+                link_text = link.get_text().lower()
+                
+                if href.endswith('.csv'):
+                    href_lower = href.lower()
+                    
+                    # Verificar cada conjunto de palabras clave
+                    for i, keyword_set in enumerate(keywords):
+                        if all(keyword in href_lower or keyword in link_text for keyword in keyword_set):
+                            file_key = f"mendoza_turistas_{i+1}"
+                            if href.startswith('http'):
+                                target_csv_urls[file_key] = href
+                            else:
+                                from urllib.parse import urljoin
+                                target_csv_urls[file_key] = urljoin(dataset_url, href)
+                            logger.info(f"✅ Encontrado por palabras clave: {file_key}")
         
-        csv_list = list(csv_urls)[:12]  # Aumentado límite
-        
-        logger.info(f"📊 Encontrados {len(csv_list)} enlaces CSV para descargar")
-        
-        if not csv_list:
-            logger.warning("⚠️ No se encontraron enlaces CSV en la página")
+        if not target_csv_urls:
+            logger.warning("⚠️ No se encontraron los archivos ETI específicos de Mendoza")
             return [{
-                "src": src, "name": "no_csvs_found",
+                "src": src, "name": "mendoza_csvs_not_found",
                 "status": "warning", "url": dataset_url,
-                "message": "No CSV links found on page", "category": category
+                "message": "No se encontraron CSVs específicos de turistas no residentes Mendoza",
+                "category": category
             }]
+        
+        logger.info(f"🎯 Encontrados {len(target_csv_urls)} archivos objetivo de Mendoza")
         
         results = []
         raw_dir = Path(directories["raw"]) / category
         
-        for i, csv_url in enumerate(csv_list, 1):
+        for file_key, csv_url in target_csv_urls.items():
             try:
-                csv_name = csv_url.split('/')[-1]
-                if not csv_name.endswith('.csv'):
-                    csv_name = f"eti_dataset_{i}.csv"
-                
-                import re
-                csv_name = re.sub(r'[^\w\-_.]', '_', csv_name)
+                # Generar nombre descriptivo
+                if "aeropuerto" in file_key.lower():
+                    csv_name = "eti_mendoza_aeropuerto_turistas_no_residentes.csv"
+                elif "cristo" in file_key.lower() or "redentor" in file_key.lower():
+                    csv_name = "eti_mendoza_cristo_redentor_turistas_no_residentes.csv"
+                else:
+                    csv_name = f"eti_mendoza_{file_key}.csv"
                 
                 dest_path = raw_dir / csv_name
                 
-                logger.info(f"📥 Descargando CSV {i}/{len(csv_list)}: {csv_name}")
+                logger.info(f"📥 Descargando ETI Mendoza: {csv_name}")
+                logger.info(f"🔗 URL: {csv_url}")
                 
                 csv_response = requests.get(csv_url, headers=headers, timeout=120, stream=True, verify=False)
                 csv_response.raise_for_status()
@@ -455,37 +496,58 @@ def scrape_and_download_csvs_enhanced(
                             f.write(chunk)
                             total_size += len(chunk)
                 
+                # Validar contenido específico
                 status = "downloaded"
+                try:
+                    # Verificar que el CSV tiene las columnas esperadas
+                    df_test = pd.read_csv(dest_path, nrows=5)
+                    expected_columns = ['fecha', 'periodo', 'residencia', 'turistas', 'no_residentes']
+                    has_relevant_columns = any(
+                        any(expected in col.lower() for expected in expected_columns)
+                        for col in df_test.columns
+                    )
+                    
+                    if not has_relevant_columns:
+                        logger.warning(f"⚠️ {csv_name} no tiene columnas esperadas")
+                        status = "downloaded_uncertain"
+                    else:
+                        logger.info(f"✅ {csv_name} validado - contiene columnas relevantes")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo validar contenido de {csv_name}: {e}")
+                
                 if total_size < min_bytes:
                     logger.warning(f"⚠️ Archivo pequeño {csv_name}: {total_size} bytes")
-                    status = "downloaded_small"
+                    if status == "downloaded":
+                        status = "downloaded_small"
                 
                 results.append({
                     "src": src, "name": csv_name, "path": str(dest_path),
                     "size": total_size, "status": status, "url": csv_url,
-                    "category": category
+                    "category": category, "file_type": "eti_mendoza_specific",
+                    "description": f"Turistas no residentes Mendoza - {file_key}"
                 })
                 
-                logger.info(f"✅ {csv_name}: {total_size:,} bytes")
+                logger.info(f"✅ {csv_name}: {total_size:,} bytes - {status}")
                 
             except Exception as e:
-                logger.error(f"❌ Error descargando CSV {i}: {e}")
+                logger.error(f"❌ Error descargando {file_key}: {e}")
                 results.append({
-                    "src": src, "name": f"error_csv_{i}",
+                    "src": src, "name": f"error_{file_key}",
                     "status": "error", "url": csv_url,
                     "error": str(e)[:150], "category": category
                 })
         
         successful = len([r for r in results if r["status"].startswith("downloaded")])
-        logger.info(f"🎯 Scraping completado: {successful}/{len(csv_list)} CSVs descargados")
+        logger.info(f"🎯 ETI Mendoza completado: {successful}/{len(target_csv_urls)} archivos específicos descargados")
         
         return results
         
     except Exception as e:
-        logger.error(f"❌ Error en scraping de {spec.get('url', 'unknown')}: {e}")
+        logger.error(f"❌ Error en scraping ETI Mendoza: {e}")
         return [{
             "src": spec.get("src", "unknown"),
-            "name": "scraping_failed",
+            "name": "eti_mendoza_scraping_failed",
             "status": "error",
             "url": spec.get("url", ""),
             "error": str(e)[:200],
@@ -529,18 +591,23 @@ def process_and_standardize_data(
                     with open(path, 'r', encoding='utf-8') as f:
                         json_data = json.load(f)
                     
-                    # Validación para arrays de igual longitud
+                    # Validación para diferentes formatos de API
                     if file_info.get("src") == "bcra":
                         # BCRA API formato: {"results": [{"index":..., "value":...}, ...]}
                         if isinstance(json_data, dict) and "results" in json_data:
                             results = json_data["results"]
-                            dates = [item.get("index") for item in results if "index" in item]
-                            values = [item.get("value") for item in results if "value" in item]
-                            if len(dates) != len(values):
-                                logger.error(f"Arrays de diferente longitud en {file_info['name']}")
+                            # Crear listas solo con elementos que tengan ambos campos
+                            valid_items = [item for item in results if "index" in item and "value" in item]
+                            if len(valid_items) == 0:
+                                logger.warning(f"No se encontraron elementos válidos en {file_info['name']}")
                                 continue
+                            
+                            dates = [item["index"] for item in valid_items]
+                            values = [item["value"] for item in valid_items]
                             df = pd.DataFrame({"fecha": dates, "valor": values})
+                            logger.info(f"✅ BCRA procesado: {len(df)} registros válidos")
                         else:
+                            # Formato genérico si no tiene results
                             df = pd.DataFrame(json_data)
                     elif file_info.get("src") == "indec":
                         # INDEC API formato: {"data": [{...}]}
@@ -549,7 +616,14 @@ def process_and_standardize_data(
                         else:
                             df = pd.DataFrame(json_data)
                     else:
-                        df = pd.DataFrame(json_data)
+                        # Formato genérico para otras fuentes
+                        if isinstance(json_data, list):
+                            df = pd.DataFrame(json_data)
+                        elif isinstance(json_data, dict):
+                            df = pd.DataFrame([json_data])
+                        else:
+                            logger.warning(f"Formato JSON no reconocido en {file_info['name']}")
+                            continue
                 else:
                     logger.warning(f"Tipo de archivo no soportado: {path}")
                     continue
@@ -569,6 +643,14 @@ def process_and_standardize_data(
                 # Si las columnas son 0,1, renómbralas manualmente
                 if list(df.columns) == [0, 1]:
                     df.columns = ['fecha_std', 'valor']
+
+                # Filtrar datos desde 2018 en adelante para uniformidad
+                if 'fecha_std' in df.columns:
+                    original_rows = len(df)
+                    df = df[df['fecha_std'] >= '2018-01-01']
+                    filtered_rows = len(df)
+                    if original_rows != filtered_rows:
+                        logger.info(f"Filtro 2018+: {original_rows} -> {filtered_rows} registros en {file_info['name']}")
             
                 # Filtrar datos de Mendoza si es relevante
                 if category in ["turismo", "infraestructura"]:
@@ -1114,12 +1196,28 @@ def create_unified_mendoza_dataset(
         # Limpiar y estandarizar
         df_unified = df_unified.drop_duplicates()
         
-        # Ordenar por fecha si existe
+        # Convertir fecha_std a datetime si existe
         if 'fecha_std' in df_unified.columns:
-            df_unified = df_unified.sort_values('fecha_std')
+            try:
+                # Intentar convertir a datetime, reemplazar valores inválidos con NaT
+                df_unified['fecha_std'] = pd.to_datetime(df_unified['fecha_std'], errors='coerce')
+                
+                # Eliminar filas con fechas inválidas
+                invalid_dates = df_unified['fecha_std'].isna().sum()
+                if invalid_dates > 0:
+                    logger.warning(f"Eliminando {invalid_dates} registros con fechas inválidas")
+                    df_unified = df_unified.dropna(subset=['fecha_std'])
+                
+                # Ordenar por fecha
+                df_unified = df_unified.sort_values('fecha_std')
+                logger.info(f"Dataset ordenado por fecha: {len(df_unified)} registros válidos")
+            except Exception as e:
+                logger.warning(f"Error procesando fechas: {e}. Continuando sin ordenar por fecha.")
+        else:
+            logger.info("No se encontró columna fecha_std para ordenar")
         
         # Guardar en volumen local montado
-        local_data_dir = Path("/opt/airflow/data_local")
+        local_data_dir = Path("/usr/local/airflow/data/raw")
         local_data_dir.mkdir(parents=True, exist_ok=True)
         
         output_path = local_data_dir / "mendoza_turismo_dataset_unificado.csv"
@@ -1134,7 +1232,7 @@ def create_unified_mendoza_dataset(
             "creation_timestamp": datetime.now().isoformat(),
             "total_records": len(df_unified),
             "total_columns": len(df_unified.columns),
-            "date_range": f"{df_unified['fecha_std'].min()} - {df_unified['fecha_std'].max()}" if 'fecha_std' in df_unified.columns else "N/A",
+            "date_range": f"{df_unified['fecha_std'].min()} - {df_unified['fecha_std'].max()}" if 'fecha_std' in df_unified.columns and not df_unified['fecha_std'].isna().all() else "N/A",
             "categories_included": df_unified['categoria'].unique().tolist(),
             "sources_included": df_unified['fuente'].unique().tolist(),
             "local_path": str(output_path),
@@ -1162,6 +1260,287 @@ def create_unified_mendoza_dataset(
         
     except Exception as e:
         logger.error(f"❌ Error creando dataset unificado: {e}")
+        return ""
+
+@task
+def create_final_mendoza_dataset(
+    processing_summary: Dict[str, Any],
+    directories: Dict[str, str]
+) -> str:
+    """Crea dataset final específico para modelado con datos desde 2018."""
+    try:
+        logger.info("🎯 Creando dataset final de Mendoza (2018+) para modelado...")
+        
+        processed_files = processing_summary.get("processed_files", {})
+        
+        # 1. Obtener datos de turistas no residentes ETI (búsqueda flexible)
+        turistas_data = []
+        
+        # Buscar archivos ETI específicos de Mendoza
+        for file_info in processed_files.get("turismo", []):
+            file_name = file_info["original_file"].lower()
+            if any(keyword in file_name for keyword in ["eti_mendoza", "turistas", "no_residentes", "mendoza"]):
+                try:
+                    df = pd.read_csv(file_info["processed_path"])
+                    if 'fecha_std' in df.columns and not df.empty:
+                        df['fuente_ingreso'] = file_info["original_file"]
+                        turistas_data.append(df)
+                        logger.info(f"✅ Datos turísticos incluidos: {file_info['original_file']} - {len(df)} registros")
+                except Exception as e:
+                    logger.warning(f"Error procesando {file_info['original_file']}: {e}")
+        
+        # Si no encuentra ETI específico, usar cualquier dato de turismo disponible
+        if not turistas_data:
+            logger.warning("No se encontraron datos ETI específicos, buscando datos de turismo generales...")
+            for file_info in processed_files.get("turismo", []):
+                try:
+                    df = pd.read_csv(file_info["processed_path"])
+                    if 'fecha_std' in df.columns and not df.empty:
+                        # Buscar columnas que contengan datos de turistas
+                        turista_cols = [col for col in df.columns if any(keyword in col.lower() for keyword in ['turista', 'visitante', 'arribo'])]
+                        if turista_cols:
+                            df['fuente_ingreso'] = file_info["original_file"]
+                            turistas_data.append(df)
+                            logger.info(f"✅ Datos turísticos generales incluidos: {file_info['original_file']} - {len(df)} registros")
+                except Exception as e:
+                    logger.warning(f"Error procesando {file_info['original_file']}: {e}")
+        
+        if not turistas_data:
+            logger.error("No se encontraron datos de turistas en ninguna fuente")
+            # Crear dataset mínimo solo con datos económicos si están disponibles
+            logger.info("Intentando crear dataset con solo datos económicos...")
+            
+            # Buscar datos USD para crear un dataset básico
+            usd_data = None
+            for file_info in processed_files.get("economico", []):
+                if "cotizacion_usd" in file_info["original_file"] or "usd" in file_info["original_file"].lower():
+                    try:
+                        df = pd.read_csv(file_info["processed_path"])
+                        if 'fecha_std' in df.columns and 'valor' in df.columns:
+                            usd_data = df[['fecha_std', 'valor']].copy()
+                            usd_data = usd_data.rename(columns={'valor': 'cotizacion_usd'})
+                            logger.info(f"✅ Datos USD encontrados: {len(usd_data)} registros")
+                            break
+                    except Exception as e:
+                        logger.warning(f"Error procesando USD {file_info['original_file']}: {e}")
+            
+            if usd_data is not None:
+                # Crear dataset básico solo con USD y eventos
+                usd_data['fecha_std'] = pd.to_datetime(usd_data['fecha_std'])
+                usd_data = usd_data[usd_data['fecha_std'] >= '2018-01-01']
+                
+                usd_data['anio'] = usd_data['fecha_std'].dt.year
+                usd_data['trimestre'] = usd_data['fecha_std'].dt.quarter
+                usd_data['periodo_trimestral'] = usd_data['anio'].astype(str) + '-T' + usd_data['trimestre'].astype(str)
+                
+                # Promedio trimestral USD
+                usd_trimestral = usd_data.groupby('periodo_trimestral')['cotizacion_usd'].mean().reset_index()
+                usd_trimestral['precio_medio_usd_trimestre'] = usd_trimestral['cotizacion_usd'].round(2)
+                
+                # Crear dataset mínimo
+                df_minimal = usd_trimestral[['periodo_trimestral', 'precio_medio_usd_trimestre']].copy()
+                df_minimal['turistas_no_residentes_total'] = 0  # Valor por defecto
+                
+                # Agregar eventos
+                def get_eventos_trimestre(periodo):
+                    try:
+                        anio, trim = periodo.split('-T')
+                        trim = int(trim)
+                        eventos = []
+                        if trim == 1: eventos = ["Vendimia", "Vacaciones de Verano"]
+                        elif trim == 2: eventos = ["Otoño"]
+                        elif trim == 3: eventos = ["Vacaciones de Invierno", "Temporada de Esquí"]
+                        elif trim == 4: eventos = ["Primavera", "Fin de Año"]
+                        return "; ".join(eventos) if eventos else "Sin eventos especiales"
+                    except:
+                        return "Sin eventos especiales"
+                
+                df_minimal['eventos_feriados_trimestre'] = df_minimal['periodo_trimestral'].apply(get_eventos_trimestre)
+                df_minimal['anio'] = df_minimal['periodo_trimestral'].str.split('-T').str[0].astype(int)
+                df_minimal['trimestre'] = df_minimal['periodo_trimestral'].str.split('-T').str[1].astype(int)
+                
+                # Guardar dataset mínimo
+                local_data_dir = Path("/usr/local/airflow/data/raw")
+                local_data_dir.mkdir(parents=True, exist_ok=True)
+                
+                output_path = local_data_dir / "mendoza_turismo_final_2018_trimestral.csv"
+                df_minimal.to_csv(output_path, index=False, encoding='utf-8')
+                
+                logger.warning("⚠️ Dataset mínimo creado sin datos de turistas (solo USD + eventos)")
+                return str(output_path)
+            else:
+                logger.error("❌ No hay datos suficientes para crear ningún dataset")
+                return ""
+        
+        # 3. Unificar datos de turistas y agrupar por trimestre
+        df_turistas = pd.concat(turistas_data, ignore_index=True)
+        df_turistas['fecha_std'] = pd.to_datetime(df_turistas['fecha_std'])
+        
+        # Filtrar desde 2018
+        df_turistas = df_turistas[df_turistas['fecha_std'] >= '2018-01-01']
+        
+        # Crear período trimestral
+        df_turistas['anio'] = df_turistas['fecha_std'].dt.year
+        df_turistas['trimestre'] = df_turistas['fecha_std'].dt.quarter
+        df_turistas['periodo_trimestral'] = df_turistas['anio'].astype(str) + '-T' + df_turistas['trimestre'].astype(str)
+        
+        # Buscar columnas de turistas no residentes
+        turistas_cols = []
+        for col in df_turistas.columns:
+            if any(keyword in col.lower() for keyword in ['turista', 'no_residente', 'visitante']):
+                if df_turistas[col].dtype in ['int64', 'float64']:
+                    turistas_cols.append(col)
+        
+        if not turistas_cols:
+            # Si no encuentra columnas específicas, usar todas las numéricas como proxy
+            turistas_cols = df_turistas.select_dtypes(include=['number']).columns.tolist()
+            turistas_cols = [col for col in turistas_cols if col not in ['anio', 'trimestre']]
+        
+        # Agregar turistas por trimestre (suma de aeropuerto + cristo redentor)
+        agg_dict = {col: 'sum' for col in turistas_cols}
+        turistas_trimestral = df_turistas.groupby('periodo_trimestral').agg(agg_dict).reset_index()
+        
+        # Crear columna unificada de turistas no residentes
+        if len(turistas_cols) > 0:
+            turistas_trimestral['turistas_no_residentes_total'] = turistas_trimestral[turistas_cols].sum(axis=1)
+        else:
+            turistas_trimestral['turistas_no_residentes_total'] = 0
+        
+        logger.info(f"📊 Datos turísticos agregados: {len(turistas_trimestral)} trimestres")
+        
+        # 4. Procesar datos USD y calcular promedio trimestral
+        usd_data = None
+        for file_info in processed_files.get("economico", []):
+            if "cotizacion_usd" in file_info["original_file"] or "usd" in file_info["original_file"].lower():
+                try:
+                    df = pd.read_csv(file_info["processed_path"])
+                    if 'fecha_std' in df.columns and 'valor' in df.columns:
+                        usd_data = df[['fecha_std', 'valor']].copy()
+                        usd_data = usd_data.rename(columns={'valor': 'cotizacion_usd'})
+                        logger.info(f"✅ Datos USD incluidos para promedio trimestral: {len(usd_data)} registros")
+                        break
+                except Exception as e:
+                    logger.warning(f"Error procesando USD {file_info['original_file']}: {e}")
+        
+        if usd_data is not None:
+            usd_data['fecha_std'] = pd.to_datetime(usd_data['fecha_std'])
+            usd_data = usd_data[usd_data['fecha_std'] >= '2018-01-01']
+            
+            usd_data['anio'] = usd_data['fecha_std'].dt.year
+            usd_data['trimestre'] = usd_data['fecha_std'].dt.quarter
+            usd_data['periodo_trimestral'] = usd_data['anio'].astype(str) + '-T' + usd_data['trimestre'].astype(str)
+            
+            # Promedio trimestral USD
+            usd_trimestral = usd_data.groupby('periodo_trimestral')['cotizacion_usd'].mean().reset_index()
+            usd_trimestral['precio_medio_usd_trimestre'] = usd_trimestral['cotizacion_usd'].round(2)
+            usd_trimestral = usd_trimestral[['periodo_trimestral', 'precio_medio_usd_trimestre']]
+            
+            logger.info(f"💱 Datos USD procesados: {len(usd_trimestral)} trimestres")
+        else:
+            # Crear DataFrame vacío si no hay datos USD
+            usd_trimestral = pd.DataFrame(columns=['periodo_trimestral', 'precio_medio_usd_trimestre'])
+            logger.warning("⚠️ No se encontraron datos de cotización USD")
+        
+        # 5. Crear columna de eventos/feriados importantes
+        def get_eventos_trimestre(periodo):
+            """Determina si hay eventos importantes en el trimestre."""
+            try:
+                anio, trim = periodo.split('-T')
+                trim = int(trim)
+                eventos = []
+                
+                if trim == 1:  # Q1: Enero, Febrero, Marzo
+                    eventos.append("Vendimia")  # Marzo
+                    eventos.append("Vacaciones de Verano")  # Enero-Febrero
+                elif trim == 2:  # Q2: Abril, Mayo, Junio
+                    eventos.append("Otoño")  # Temporada media
+                elif trim == 3:  # Q3: Julio, Agosto, Septiembre
+                    eventos.append("Vacaciones de Invierno")  # Julio
+                    eventos.append("Temporada de Esquí")  # Julio-Agosto
+                elif trim == 4:  # Q4: Octubre, Noviembre, Diciembre
+                    eventos.append("Primavera")  # Temporada alta pre-verano
+                    eventos.append("Fin de Año")  # Diciembre
+                
+                return "; ".join(eventos) if eventos else "Sin eventos especiales"
+            except:
+                return "Sin eventos especiales"
+        
+        # 6. Consolidar dataset final
+        df_final = turistas_trimestral[['periodo_trimestral', 'turistas_no_residentes_total']].copy()
+        
+        # Merge con datos USD
+        if not usd_trimestral.empty:
+            df_final = df_final.merge(usd_trimestral, on='periodo_trimestral', how='left')
+        else:
+            df_final['precio_medio_usd_trimestre'] = None
+        
+        # Agregar eventos
+        df_final['eventos_feriados_trimestre'] = df_final['periodo_trimestral'].apply(get_eventos_trimestre)
+        
+        # Agregar metadatos temporales
+        df_final['anio'] = df_final['periodo_trimestral'].str.split('-T').str[0].astype(int)
+        df_final['trimestre'] = df_final['periodo_trimestral'].str.split('-T').str[1].astype(int)
+        
+        # Ordenar por período
+        df_final = df_final.sort_values(['anio', 'trimestre']).reset_index(drop=True)
+        
+        # 7. Guardar dataset final
+        local_data_dir = Path("/usr/local/airflow/data/raw")
+        local_data_dir.mkdir(parents=True, exist_ok=True)
+        
+        output_path = local_data_dir / "mendoza_turismo_final_2018_trimestral.csv"
+        df_final.to_csv(output_path, index=False, encoding='utf-8')
+        
+        # También guardar en curated
+        curated_path = Path(directories["curated"]) / "mendoza_turismo_final_trimestral.csv"
+        df_final.to_csv(curated_path, index=False, encoding='utf-8')
+        
+        # Crear resumen del dataset final
+        dataset_summary = {
+            "creation_timestamp": datetime.now().isoformat(),
+            "descripcion": "Dataset final trimestral para modelado de demanda hotelera Mendoza",
+            "periodo_datos": "2018 en adelante",
+            "frecuencia": "Trimestral",
+            "total_trimestres": len(df_final),
+            "rango_temporal": f"{df_final['periodo_trimestral'].min()} - {df_final['periodo_trimestral'].max()}",
+            "columnas_finales": [
+                "periodo_trimestral",
+                "turistas_no_residentes_total", 
+                "precio_medio_usd_trimestre",
+                "eventos_feriados_trimestre",
+                "anio",
+                "trimestre"
+            ],
+            "estadisticas": {
+                "turistas_promedio": float(df_final['turistas_no_residentes_total'].mean()),
+                "turistas_min": int(df_final['turistas_no_residentes_total'].min()),
+                "turistas_max": int(df_final['turistas_no_residentes_total'].max()),
+                "usd_promedio": float(df_final['precio_medio_usd_trimestre'].mean()) if df_final['precio_medio_usd_trimestre'].notna().any() else None
+            },
+            "archivos": {
+                "local": str(output_path),
+                "pipeline": str(curated_path)
+            }
+        }
+        
+        summary_path = local_data_dir / "dataset_final_summary.json"
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(dataset_summary, f, indent=2, ensure_ascii=False)
+        
+        logger.info("=" * 80)
+        logger.info("🎯 DATASET FINAL TRIMESTRAL CREADO EXITOSAMENTE")
+        logger.info("=" * 80)
+        logger.info(f"Trimestres procesados: {len(df_final)}")
+        logger.info(f"Rango temporal: {df_final['periodo_trimestral'].min()} - {df_final['periodo_trimestral'].max()}")
+        logger.info(f"Turistas promedio por trimestre: {df_final['turistas_no_residentes_total'].mean():,.0f}")
+        logger.info(f"Archivo final: {output_path}")
+        logger.info(f"Resumen: {summary_path}")
+        logger.info("=" * 80)
+        
+        return str(output_path)
+        
+    except Exception as e:
+        logger.error(f"❌ Error creando dataset final: {e}")
         return ""
 
 # ─── DAG Definition Mejorado ───────────────────────────────────────────────────
@@ -1227,9 +1606,6 @@ with DAG(
         elif tipo == "api_json":
             api_task = download_api_json(spec=spec, directories=dirs)
             all_downloads.append(api_task)
-        elif tipo == "dataset_page_scraping":
-            scraping_task = scrape_and_download_csvs_enhanced(spec=spec, directories=dirs)
-            all_downloads.append(scraping_task)
     
     # Procesar specs dinámicas resueltas
     for resolved_spec in resolved_specs:
@@ -1255,14 +1631,20 @@ with DAG(
         directories=dirs
     )
 
-    # 7. Validación mejorada
+    # 7. Crear dataset final específico para modelado (NUEVA TAREA)
+    final_dataset = create_final_mendoza_dataset(
+        processing_summary=processing_result,
+        directories=dirs
+    )
+
+    # 8. Validación mejorada
     enhanced_validation = validate_enhanced_data(
         all_downloads=all_downloads,
         processing_summary=processing_result,
         directories=dirs
     )
 
-    # 8. Reporte final mejorado
+    # 9. Reporte final mejorado
     final_enhanced_report = generate_enhanced_pipeline_report(
         validation_results=enhanced_validation,
         processing_summary=processing_result,
@@ -1271,4 +1653,4 @@ with DAG(
     )
 
     # Dependencias del pipeline mejorado
-    dirs >> all_downloads >> processing_result >> [features_matrix, unified_dataset] >> enhanced_validation >> final_enhanced_report
+    dirs >> all_downloads >> processing_result >> [features_matrix, unified_dataset, final_dataset] >> enhanced_validation >> final_enhanced_report

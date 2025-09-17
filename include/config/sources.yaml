@@ -1,66 +1,66 @@
-# include/config/sources.yaml - Versión estable (2025)
+# Configuración mínima para pipeline de demanda hotelera Mendoza
 
 # -------------------------------
-# Turismo (Yvera)
+# Turismo (ETI - CSVs directos)  
 # -------------------------------
-open_data_mza:
-  dataset_name: "turismo-internacional-total-pais"
-  api_url: "https://datos.yvera.gob.ar/dataset/4cbf7d4a-702a-4911-8c1e-717a45214902/resource/fd710cb7-1981-43ea-aba3-7a14c356446b/download/turistas-residentes-serie.csv"
-  resource_format: "csv"
+eti_aeropuerto:
+  dataset_name: "eti_mendoza_aeropuerto_turistas_no_residentes"
+  api_url: "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/c112ca01-2563-4a48-a8d6-1126af9a5f1d/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_aeropuerto_mendoza_trimes.csv"
   type: "direct_csv"
-  parse: false
-  min_bytes: 5000
+  min_bytes: 2000
 
-eti:
-  dataset_name: "encuesta_turismo_internacional"
-  dataset_url: "https://datos.gob.ar/dataset/turismo-encuesta-turismo-internacional-eti"
-  type: "dataset_page_scraping"
-  dynamic_scraping: true
-  min_bytes: 10000
+eti_cristo_redentor:
+  dataset_name: "eti_mendoza_cristo_redentor_turistas_no_residentes"
+  api_url: "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/941a5faf-898d-47f5-b889-25e3919bc468/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_cristo_redentor_trimestra.csv"
+  type: "direct_csv"
+  min_bytes: 2000
 
 # -------------------------------
-# Variables económicas (Datos.gob.ar - API series)
+# Variables económicas (BCRA)
 # -------------------------------
 bcra_usd:
   dataset_name: "cotizacion_usd_bcra"
-  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=168.1_T_CAMBIOR_D_0_0_26&start_date=2020-01-01&limit=5000"
-  description: "Cotización oficial del dólar (BCRA)"
+  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=168.1_T_CAMBIOR_D_0_0_26&start_date=2018-01-01&limit=5000"
   type: "api_json"
   min_bytes: 1000
-  parse_json: true
   date_column: "index"
   value_column: "value"
 
-
-indec_pib:
-  dataset_name: "pib_mensual_indec"
-  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=143.3_NO_PR_2004_A_21&start_date=2020-01-01&limit=5000"
-  description: "PIB mensual Argentina"
-  type: "api_json"
-  min_bytes: 2000
-  parse_json: true
-
-indec_empleo:
-  dataset_name: "tasa_desempleo_indec"
-  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=143.3_TL_0_M_26&start_date=2020-01-01&limit=5000"
-  description: "Tasa de desempleo Argentina"
-  type: "api_json"
-  min_bytes: 1000
-  parse_json: true
-
-indec_pobreza:
-  dataset_name: "pobreza_indec"
-  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=148.3_I2NG_2016_M_22&start_date=2020-01-01&limit=5000"
-  description: "Pobreza e indigencia (estimadores)"
-  type: "api_json"
-  min_bytes: 1000
-  parse_json: true
+# -------------------------------
+# Eventos principales Mendoza
+# -------------------------------
+eventos_mendoza:
+  dataset_name: "eventos_turisticos_mendoza"
+  manual_data: true
+  eventos_principales:
+    - nombre: "Fiesta Nacional de la Vendimia"
+      mes: 3
+    - nombre: "Vacaciones de Verano"
+      mes: [1, 2]
+    - nombre: "Vacaciones de Invierno"
+      mes: 7
+    - nombre: "Temporada de Esquí"
+      mes: [7, 8]
+    - nombre: "Primavera"
+      mes: 10
+    - nombre: "Fin de Año"
+      mes: 12
 
 # -------------------------------
-# Clima Mendoza (SMN - CSV)
+# Configuración del pipeline
 # -------------------------------
-weather_mendoza:
-  dataset_name: "clima_mendoza_historico"
+defaults:
+  timeout_seconds: 180
+  chunk_size: 8192
+  max_retries: 3
+  min_rows_per_table: 3
+  enable_small_files: true
+
+validation:
+  enable_data_quality_checks: true
+  min_rows_per_table: 3
+  allow_small_valid_files: true
+  small_file_threshold: 5000
   dataset_url: "https://cdn.smn.gob.ar/datos2/historicos/observaciones_mendoza.csv"
   description: "Datos climáticos históricos Mendoza"
   type: "direct_csv"
@@ -103,15 +103,6 @@ eventos_mendoza:
       impacto: "alto"
       duracion_dias: 15
 
-# -------------------------------
-# Demografía Mendoza (API Georef)
-# -------------------------------
-demografia_mendoza:
-  dataset_name: "poblacion_mendoza_indec"
-  api_url: "https://apis.datos.gob.ar/georef/api/provincias?nombre=Mendoza"
-  description: "Datos demográficos Mendoza"
-  type: "api_json"
-  min_bytes: 500
 
 # Para URLs que cambian mes a mes, agregá estas entradas:
 
@@ -125,12 +116,18 @@ indec_turismo_dinamico:
   min_bytes: 5000
   description: "Datos turísticos INDEC con URL dinámica"
 
-# Ejemplo para datos que requieren scraping avanzado
-yvera_dinamico:
-  dataset_name: "yvera_establecimientos_dinamico"
-  base_url: "https://datos.yvera.gob.ar/dataset/sinta-establecimientos-alojamiento-turistico"
-  search_pattern: "mendoza.*\\.csv$|alojamiento.*mendoza.*\\.csv$"
-  type: "dynamic_url"
-  fallback_type: "dataset_page_scraping"
-  min_bytes: 10000
-  description: "Establecimientos Mendoza URL dinámica"
+# Configuración por defecto para validaciones
+defaults:
+  timeout_seconds: 180
+  chunk_size: 8192
+  max_retries: 3
+  min_rows_per_table: 3  # Reducido desde 5
+  enable_small_files: true  # Nueva opción
+
+# Configuración de validación
+validation:
+  enable_data_quality_checks: true
+  min_rows_per_table: 3  # Reducido para archivos ETI pequeños
+  allow_small_valid_files: true  # Nueva opción
+  small_file_threshold: 5000  # bytes
+

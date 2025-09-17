@@ -85,30 +85,37 @@ def build_enhanced_download_specs(cfg: dict) -> List[Dict[str, Any]]:
             })
             logger.info("✅ Open Data Mendoza spec configurado")
     
-    eti_config = cfg.get("eti", {})
-    if eti_config and eti_config.get("dynamic_scraping", False):
-        # En lugar de scraping, usar URLs directas de los CSVs específicos
-        specs.append({
-            "src": "eti_aeropuerto",
-            "name": "eti_mendoza_aeropuerto_turistas_no_residentes.csv",
-            "url": "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/c112ca01-2563-4a48-a8d6-1126af9a5f1d/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_aeropuerto_mendoza_trimes.csv",
-            "type": "direct_csv",
-            "min_bytes": eti_config.get("min_bytes", 10000),
-            "description": "ETI Mendoza - Aeropuerto - Turistas no residentes",
-            "category": "turismo"
-        })
-        
-        specs.append({
-            "src": "eti_cristo_redentor",
-            "name": "eti_mendoza_cristo_redentor_turistas_no_residentes.csv",
-            "url": "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/941a5faf-898d-47f5-b889-25e3919bc468/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_cristo_redentor_trimestra.csv",
-            "type": "direct_csv", 
-            "min_bytes": eti_config.get("min_bytes", 10000),
-            "description": "ETI Mendoza - Cristo Redentor - Turistas no residentes",
-            "category": "turismo"
-        })
-        
-        logger.info("✅ ETI URLs directas configuradas (Aeropuerto + Cristo Redentor)")
+    # ETI aeropuerto
+    eti_aeropuerto_config = cfg.get("eti_aeropuerto", {})
+    if eti_aeropuerto_config:
+        api_url = eti_aeropuerto_config.get("api_url")
+        if api_url:
+            specs.append({
+                "src": "eti_aeropuerto",
+                "name": f"{eti_aeropuerto_config.get('dataset_name', 'eti_mendoza_aeropuerto_turistas_no_residentes')}.csv",
+                "url": api_url,
+                "type": "direct_csv",
+                "min_bytes": eti_aeropuerto_config.get("min_bytes", 2000),
+                "description": "ETI Mendoza - Aeropuerto - Turistas no residentes",
+                "category": "turismo"
+            })
+            logger.info("✅ ETI Aeropuerto spec configurado")
+
+    # ETI cristo redentor
+    eti_cristo_config = cfg.get("eti_cristo_redentor", {})
+    if eti_cristo_config:
+        api_url = eti_cristo_config.get("api_url")
+        if api_url:
+            specs.append({
+                "src": "eti_cristo_redentor",
+                "name": f"{eti_cristo_config.get('dataset_name', 'eti_mendoza_cristo_redentor_turistas_no_residentes')}.csv",
+                "url": api_url,
+                "type": "direct_csv",
+                "min_bytes": eti_cristo_config.get("min_bytes", 2000),
+                "description": "ETI Mendoza - Cristo Redentor - Turistas no residentes",
+                "category": "turismo"
+            })
+            logger.info("✅ ETI Cristo Redentor spec configurado")
     
     # 2. Variables económicas - BCRA
     bcra_usd_config = cfg.get("bcra_usd", {})
@@ -245,7 +252,7 @@ def download_direct_csv_enhanced(
     spec: Dict[str, Any],
     directories: Dict[str, str]
 ) -> Dict[str, Any]:
-    """Descarga CSV con categorización."""
+    """Descarga CSV con categorización y validación mejorada."""
     try:
         src = spec["src"]
         name = spec["name"] 
@@ -289,9 +296,30 @@ def download_direct_csv_enhanced(
                         f.write(chunk)
                         total_size += len(chunk)
         
+        # Validación mejorada para archivos pequeños
         if total_size < min_bytes:
-            dest_path.unlink()
-            raise ValueError(f"Archivo muy pequeño: {total_size} < {min_bytes} bytes")
+            # No eliminar automáticamente, sino verificar contenido
+            logger.warning(f"⚠️ Archivo pequeño detectado: {name} - {total_size} bytes (mínimo: {min_bytes})")
+            
+            # Verificar si es un archivo CSV válido con datos
+            try:
+                df_test = pd.read_csv(dest_path)
+                if len(df_test) > 0 and len(df_test.columns) > 2:
+                    logger.info(f"✅ Archivo pequeño pero válido: {len(df_test)} filas, {len(df_test.columns)} columnas")
+                    return {
+                        "src": src, "name": name, "path": str(dest_path),
+                        "size": total_size, "status": "downloaded_small_valid", "url": url,
+                        "description": spec["description"], "category": category,
+                        "validation": f"{len(df_test)} filas válidas"
+                    }
+                else:
+                    logger.error(f"❌ Archivo muy pequeño con pocos datos: {len(df_test)} filas")
+                    dest_path.unlink()
+                    raise ValueError(f"Archivo con datos insuficientes: {len(df_test)} filas")
+            except Exception as e:
+                logger.error(f"❌ Error validando archivo pequeño: {e}")
+                dest_path.unlink()
+                raise ValueError(f"Archivo muy pequeño y no válido: {total_size} < {min_bytes} bytes")
         
         logger.info(f"✅ Descarga exitosa: {name} - {total_size:,} bytes")
         
@@ -578,6 +606,7 @@ def process_and_standardize_data(
         processed_dir = Path(directories["processed"])
         
         for file_info in files:
+            # Incluir archivos pequeños pero válidos
             if not file_info.get("status", "").startswith("downloaded"):
                 continue
             
@@ -587,85 +616,247 @@ def process_and_standardize_data(
             try:
                 if path.endswith(".csv"):
                     df = pd.read_csv(path, encoding='utf-8')
+                    
+                    # Log adicional para archivos ETI pequeños
+                    if "eti" in file_info.get("name", "").lower():
+                        logger.info(f"📊 Procesando ETI {file_info['name']}: {len(df)} filas, columnas: {list(df.columns)}")
+                        logger.info(f"📊 Primeras 10 filas del archivo original:\n{df.head(10)}")
+                        
+                        # DEBUG ESPECÍFICO PARA AEROPUERTO: Mostrar todas las filas si es pequeño
+                        if "aeropuerto" in file_info.get("name", "").lower():
+                            logger.info(f"🔍 AEROPUERTO - Total de filas en archivo original: {len(df)}")
+                            if len(df) <= 50:  # Si es pequeño, mostrar todo
+                                logger.info(f"🔍 AEROPUERTO - Archivo completo:\n{df}")
+                            else:
+                                logger.info(f"🔍 AEROPUERTO - Primeras 20 filas:\n{df.head(20)}")
+                                logger.info(f"🔍 AEROPUERTO - Últimas 20 filas:\n{df.tail(20)}")
+                        
                 elif path.endswith(".json"):
                     with open(path, 'r', encoding='utf-8') as f:
                         json_data = json.load(f)
                     
-                    # Validación para diferentes formatos de API
+                    # Validación mejorada para diferentes formatos de API
                     if file_info.get("src") == "bcra":
+                        logger.info(f"🏦 Procesando datos BCRA: {file_info['name']}")
+                        
                         # BCRA API formato: {"results": [{"index":..., "value":...}, ...]}
                         if isinstance(json_data, dict) and "results" in json_data:
                             results = json_data["results"]
-                            # Crear listas solo con elementos que tengan ambos campos
-                            valid_items = [item for item in results if "index" in item and "value" in item]
+                            logger.info(f"📊 BCRA raw results: {len(results)} elementos")
+                            
+                            # Validación robusta: filtrar elementos válidos
+                            valid_items = []
+                            for i, item in enumerate(results):
+                                if isinstance(item, dict) and "index" in item and "value" in item:
+                                    # Verificar que los valores no sean None/null
+                                    if item["index"] is not None and item["value"] is not None:
+                                        # Verificar que value sea numérico
+                                        try:
+                                            float(item["value"])
+                                            valid_items.append(item)
+                                        except (ValueError, TypeError):
+                                            logger.warning(f"BCRA item {i}: valor no numérico: {item.get('value')}")
+                                    else:
+                                        logger.warning(f"BCRA item {i}: index o value es None")
+                                else:
+                                    logger.warning(f"BCRA item {i}: formato inválido: {item}")
+                            
                             if len(valid_items) == 0:
-                                logger.warning(f"No se encontraron elementos válidos en {file_info['name']}")
+                                logger.error(f"No se encontraron elementos válidos en {file_info['name']}")
                                 continue
                             
-                            dates = [item["index"] for item in valid_items]
-                            values = [item["value"] for item in valid_items]
-                            df = pd.DataFrame({"fecha": dates, "valor": values})
-                            logger.info(f"✅ BCRA procesado: {len(df)} registros válidos")
+                            logger.info(f"✅ BCRA elementos válidos: {len(valid_items)}/{len(results)}")
+                            
+                            # Crear DataFrame solo con elementos válidos
+                            try:
+                                dates = [item["index"] for item in valid_items]
+                                values = [float(item["value"]) for item in valid_items]
+                                
+                                # Verificación adicional de longitudes
+                                if len(dates) != len(values):
+                                    logger.error(f"Longitudes diferentes: dates={len(dates)}, values={len(values)}")
+                                    # Tomar el mínimo para evitar error
+                                    min_len = min(len(dates), len(values))
+                                    dates = dates[:min_len]
+                                    values = values[:min_len]
+                                    logger.warning(f"Ajustado a longitud mínima: {min_len}")
+                                
+                                df = pd.DataFrame({"fecha": dates, "valor": values})
+                                logger.info(f"✅ BCRA DataFrame creado: {len(df)} registros válidos")
+                                
+                            except Exception as e:
+                                logger.error(f"Error creando DataFrame BCRA: {e}")
+                                continue
                         else:
                             # Formato genérico si no tiene results
-                            df = pd.DataFrame(json_data)
+                            logger.warning(f"BCRA formato no estándar en {file_info['name']}")
+                            if isinstance(json_data, list):
+                                df = pd.DataFrame(json_data)
+                            elif isinstance(json_data, dict):
+                                df = pd.DataFrame([json_data])
+                            else:
+                                logger.error(f"Formato JSON BCRA no reconocido: {type(json_data)}")
+                                continue
                     elif file_info.get("src") == "indec":
-                        # INDEC API formato: {"data": [{...}]}
+                        logger.info(f"📈 Procesando datos INDEC: {file_info['name']}")
+                        
+                        # INDEC API formato: {"data": [{...}]} o directo
                         if isinstance(json_data, dict) and "data" in json_data:
-                            df = pd.DataFrame(json_data["data"])
-                        else:
-                            df = pd.DataFrame(json_data)
-                    else:
-                        # Formato genérico para otras fuentes
-                        if isinstance(json_data, list):
+                            if isinstance(json_data["data"], list):
+                                df = pd.DataFrame(json_data["data"])
+                            else:
+                                df = pd.DataFrame([json_data["data"]])
+                        elif isinstance(json_data, list):
                             df = pd.DataFrame(json_data)
                         elif isinstance(json_data, dict):
                             df = pd.DataFrame([json_data])
                         else:
-                            logger.warning(f"Formato JSON no reconocido en {file_info['name']}")
+                            logger.error(f"Formato JSON INDEC no reconocido: {type(json_data)}")
+                            continue
+                    else:
+                        # Formato genérico para otras fuentes
+                        logger.info(f"📄 Procesando JSON genérico: {file_info['name']}")
+                        
+                        if isinstance(json_data, list):
+                            if len(json_data) > 0:
+                                df = pd.DataFrame(json_data)
+                            else:
+                                logger.warning(f"Lista JSON vacía en {file_info['name']}")
+                                continue
+                        elif isinstance(json_data, dict):
+                            df = pd.DataFrame([json_data])
+                        else:
+                            logger.warning(f"Formato JSON no reconocido en {file_info['name']}: {type(json_data)}")
                             continue
                 else:
                     logger.warning(f"Tipo de archivo no soportado: {path}")
                     continue
                 
-                # Estandarizar columnas de fecha
+                # Verificar que el DataFrame no esté vacío
+                if df.empty:
+                    logger.warning(f"DataFrame vacío generado para {file_info['name']}")
+                    continue
+                
+                # AGREGAR UN ÍNDICE DE TIEMPO TEMPORAL PARA DEBUGGING
+                if "eti" in file_info.get("name", "").lower():
+                    # Buscar columnas de fecha/período para crear indice_tiempo
+                    date_col_found = None
+                    for col in df.columns:
+                        if col.lower() in ['fecha', 'periodo', 'period', 'anio_trimestre', 'trimestre']:
+                            date_col_found = col
+                            break
+                    
+                    if date_col_found:
+                        logger.info(f"🔍 ETI {file_info['name']} - Columna de fecha encontrada: {date_col_found}")
+                        logger.info(f"🔍 ETI {file_info['name']} - Valores únicos en {date_col_found}: {df[date_col_found].unique()}")
+                        
+                        # Convertir a datetime y crear indice_tiempo antes de los filtros
+                        try:
+                            df[date_col_found] = pd.to_datetime(df[date_col_found], errors='coerce')
+                            df['indice_tiempo'] = df[date_col_found]
+                            df = df.rename(columns={date_col_found: 'fecha_std'})
+                            logger.info(f"✅ ETI {file_info['name']} - indice_tiempo creado exitosamente")
+                        except Exception as e:
+                            logger.error(f"❌ ETI {file_info['name']} - Error creando indice_tiempo: {e}")
+                    else:
+                        logger.warning(f"⚠️ ETI {file_info['name']} - No se encontró columna de fecha")
+
+                # Estandarizar columnas de fecha con mejor manejo de errores
                 date_columns = ['fecha', 'date', 'periodo', 'period', 'index']
+                date_converted = False
+                
                 for col in df.columns:
                     if isinstance(col, str) and col.lower() in date_columns:
                         try:
-                            df[col] = pd.to_datetime(df[col])
-                            df = df.rename(columns={col: 'fecha_std'})
-                            break
+                            # Intentar conversión con diferentes formatos
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                            
+                            # Verificar cuántos valores se convirtieron exitosamente
+                            valid_dates = df[col].notna().sum()
+                            total_dates = len(df)
+                            
+                            if valid_dates > 0:
+                                df = df.rename(columns={col: 'fecha_std'})
+                                date_converted = True
+                                logger.info(f"✅ Columna {col} convertida a fecha_std: {valid_dates}/{total_dates} válidas")
+                                
+                                # Filtrar filas con fechas inválidas si hay muchas
+                                if valid_dates < total_dates * 0.8:  # Si menos del 80% son válidas
+                                    logger.warning(f"Filtrando {total_dates - valid_dates} filas con fechas inválidas")
+                                    df = df.dropna(subset=['fecha_std'])
+                                
+                                break
+                            else:
+                                logger.warning(f"No se pudieron convertir fechas en columna {col}")
                         except Exception as e:
                             logger.warning(f"Error convirtiendo columna {col} a fecha: {e}")
                             continue
 
-                # Si las columnas son 0,1, renómbralas manualmente
-                if list(df.columns) == [0, 1]:
+                # Si las columnas son numéricas (0,1), renombrar manualmente
+                if list(df.columns) == [0, 1] and not date_converted:
                     df.columns = ['fecha_std', 'valor']
+                    try:
+                        df['fecha_std'] = pd.to_datetime(df['fecha_std'], errors='coerce')
+                        # Filtrar fechas inválidas
+                        df = df.dropna(subset=['fecha_std'])
+                        date_converted = True
+                        logger.info(f"✅ Columnas numéricas renombradas y fechas convertidas: {len(df)} registros")
+                    except Exception as e:
+                        logger.warning(f"Error convirtiendo fechas en columnas numéricas: {e}")
+
+                # DEBUG: Mostrar estado después de conversión de fechas para archivos ETI
+                if "eti" in file_info.get("name", "").lower():
+                    logger.info(f"🔍 ETI {file_info['name']} después de conversión fechas: {len(df)} filas")
+                    if 'fecha_std' in df.columns:
+                        logger.info(f"🔍 ETI {file_info['name']} - Rango fechas: {df['fecha_std'].min()} a {df['fecha_std'].max()}")
 
                 # Filtrar datos desde 2018 en adelante para uniformidad
-                if 'fecha_std' in df.columns:
+                if 'fecha_std' in df.columns and date_converted:
                     original_rows = len(df)
                     df = df[df['fecha_std'] >= '2018-01-01']
                     filtered_rows = len(df)
                     if original_rows != filtered_rows:
-                        logger.info(f"Filtro 2018+: {original_rows} -> {filtered_rows} registros en {file_info['name']}")
-            
-                # Filtrar datos de Mendoza si es relevante
-                if category in ["turismo", "infraestructura"]:
+                        logger.info(f"📅 Filtro 2018+: {original_rows} -> {filtered_rows} registros en {file_info['name']}")
+                    
+                    # DEBUG ESPECÍFICO PARA AEROPUERTO después del filtro de fecha
+                    if "aeropuerto" in file_info.get("name", "").lower():
+                        logger.info(f"🔍 AEROPUERTO después filtro 2018+: {len(df)} filas")
+                        if len(df) <= 20:
+                            logger.info(f"🔍 AEROPUERTO después filtro fecha:\n{df}")
+                
+                # NO FILTRAR POR MENDOZA EN ARCHIVOS ETI - Ya son específicos de Mendoza
+                if category in ["turismo"] and not "eti" in file_info.get("name", "").lower():
                     mendoza_keywords = ["mendoza", "mza", "cuyo", "50"]  # Código INDEC Mendoza
                     mendoza_mask = pd.Series([False] * len(df))
                     
                     for col in df.columns:
                         if isinstance(col, str) and df[col].dtype == object:
-                            mendoza_mask = mendoza_mask | df[col].astype(str).str.contains(
-                                "|".join(mendoza_keywords), case=False, na=False
-                            )
+                            try:
+                                mendoza_mask = mendoza_mask | df[col].astype(str).str.contains(
+                                    "|".join(mendoza_keywords), case=False, na=False
+                                )
+                            except Exception as e:
+                                logger.warning(f"Error aplicando filtro Mendoza en columna {col}: {e}")
                     
                     if mendoza_mask.any():
+                        original_len = len(df)
                         df = df[mendoza_mask]
-                        logger.info(f"Filtrado Mendoza aplicado a {file_info['name']}: {len(df)} registros")
+                        logger.info(f"🗺️ Filtrado Mendoza aplicado a {file_info['name']}: {original_len} -> {len(df)} registros")
+                elif "eti" in file_info.get("name", "").lower():
+                    logger.info(f"🗺️ ETI {file_info['name']} - Saltando filtro Mendoza (ya es específico de Mendoza)")
+                
+                # Verificar que aún tengamos datos después de todos los filtros
+                if df.empty:
+                    logger.warning(f"DataFrame vacío después de filtros para {file_info['name']}")
+                    continue
+                
+                # DEBUG FINAL para archivos ETI
+                if "eti" in file_info.get("name", "").lower():
+                    logger.info(f"🔍 ETI {file_info['name']} FINAL: {len(df)} filas, columnas: {list(df.columns)}")
+                    if 'indice_tiempo' in df.columns:
+                        logger.info(f"🔍 ETI {file_info['name']} - índices de tiempo únicos: {df['indice_tiempo'].unique()}")
+                    if 'turistas_no_residentes' in df.columns:
+                        logger.info(f"🔍 ETI {file_info['name']} - suma total turistas: {df['turistas_no_residentes'].sum()}")
                 
                 # Guardar archivo procesado
                 output_path = processed_dir / category / f"processed_{file_info['name'].replace('.json', '.csv')}"
@@ -677,27 +868,37 @@ def process_and_standardize_data(
                     "rows": len(df),
                     "columns": len(df.columns),
                     "has_date_column": 'fecha_std' in df.columns,
-                    "date_range": f"{df['fecha_std'].min()} - {df['fecha_std'].max()}" if 'fecha_std' in df.columns else "N/A"
+                    "date_range": f"{df['fecha_std'].min()} - {df['fecha_std'].max()}" if 'fecha_std' in df.columns else "N/A",
+                    "original_status": file_info.get("status", "unknown"),
+                    "data_source": file_info.get("src", "unknown")
                 })
                 
-                logger.info(f"✅ Procesado {category}/{file_info['name']}: {len(df)} filas")
+                logger.info(f"✅ Procesado {category}/{file_info['name']}: {len(df)} filas, {len(df.columns)} columnas")
                 
             except Exception as e:
                 logger.error(f"❌ Error procesando {file_info['name']}: {e}")
+                # Log adicional para debugging
+                logger.error(f"   Archivo: {path}")
+                logger.error(f"   Categoría: {category}")
+                logger.error(f"   Fuente: {file_info.get('src', 'unknown')}")
                 continue
         
-        # Log de archivos con fecha_std
+        # Log de archivos procesados con fecha_std
         for category, files in processed_files.items():
             for file_info in files:
-                df = pd.read_csv(file_info["processed_path"])
-                logger.info(f"{file_info['original_file']} - filas: {len(df)}, tiene fecha_std: {'fecha_std' in df.columns}")
+                try:
+                    df = pd.read_csv(file_info["processed_path"])
+                    logger.info(f"📋 {file_info['original_file']} - filas: {len(df)}, tiene fecha_std: {'fecha_std' in df.columns}")
+                except Exception as e:
+                    logger.warning(f"Error verificando archivo procesado {file_info['original_file']}: {e}")
         
         # Resumen de procesamiento
         summary = {
             "timestamp": datetime.now().isoformat(),
             "files_by_category": {cat: len(files) for cat, files in processed_files.items()},
             "total_processed": sum(len(files) for files in processed_files.values()),
-            "processed_files": processed_files
+            "processed_files": processed_files,
+            "success": True
         }
         
         # Guardar resumen
@@ -1267,282 +1468,212 @@ def create_final_mendoza_dataset(
     processing_summary: Dict[str, Any],
     directories: Dict[str, str]
 ) -> str:
-    """Crea dataset final específico para modelado con datos desde 2018."""
+    """Crea dataset final trimestral filtrado y limpio para modelado."""
     try:
-        logger.info("🎯 Creando dataset final de Mendoza (2018+) para modelado...")
-        
+        logger.info("🎯 Creando dataset final filtrado para modelado...")
+
         processed_files = processing_summary.get("processed_files", {})
-        
-        # 1. Obtener datos de turistas no residentes ETI (búsqueda flexible)
-        turistas_data = []
-        
-        # Buscar archivos ETI específicos de Mendoza
-        for file_info in processed_files.get("turismo", []):
-            file_name = file_info["original_file"].lower()
-            if any(keyword in file_name for keyword in ["eti_mendoza", "turistas", "no_residentes", "mendoza"]):
-                try:
-                    df = pd.read_csv(file_info["processed_path"])
-                    if 'fecha_std' in df.columns and not df.empty:
-                        df['fuente_ingreso'] = file_info["original_file"]
-                        turistas_data.append(df)
-                        logger.info(f"✅ Datos turísticos incluidos: {file_info['original_file']} - {len(df)} registros")
-                except Exception as e:
-                    logger.warning(f"Error procesando {file_info['original_file']}: {e}")
-        
-        # Si no encuentra ETI específico, usar cualquier dato de turismo disponible
-        if not turistas_data:
-            logger.warning("No se encontraron datos ETI específicos, buscando datos de turismo generales...")
-            for file_info in processed_files.get("turismo", []):
-                try:
-                    df = pd.read_csv(file_info["processed_path"])
-                    if 'fecha_std' in df.columns and not df.empty:
-                        # Buscar columnas que contengan datos de turistas
-                        turista_cols = [col for col in df.columns if any(keyword in col.lower() for keyword in ['turista', 'visitante', 'arribo'])]
-                        if turista_cols:
-                            df['fuente_ingreso'] = file_info["original_file"]
-                            turistas_data.append(df)
-                            logger.info(f"✅ Datos turísticos generales incluidos: {file_info['original_file']} - {len(df)} registros")
-                except Exception as e:
-                    logger.warning(f"Error procesando {file_info['original_file']}: {e}")
-        
-        if not turistas_data:
-            logger.error("No se encontraron datos de turistas en ninguna fuente")
-            # Crear dataset mínimo solo con datos económicos si están disponibles
-            logger.info("Intentando crear dataset con solo datos económicos...")
-            
-            # Buscar datos USD para crear un dataset básico
-            usd_data = None
-            for file_info in processed_files.get("economico", []):
-                if "cotizacion_usd" in file_info["original_file"] or "usd" in file_info["original_file"].lower():
-                    try:
-                        df = pd.read_csv(file_info["processed_path"])
-                        if 'fecha_std' in df.columns and 'valor' in df.columns:
-                            usd_data = df[['fecha_std', 'valor']].copy()
-                            usd_data = usd_data.rename(columns={'valor': 'cotizacion_usd'})
-                            logger.info(f"✅ Datos USD encontrados: {len(usd_data)} registros")
-                            break
-                    except Exception as e:
-                        logger.warning(f"Error procesando USD {file_info['original_file']}: {e}")
-            
-            if usd_data is not None:
-                # Crear dataset básico solo con USD y eventos
-                usd_data['fecha_std'] = pd.to_datetime(usd_data['fecha_std'])
-                usd_data = usd_data[usd_data['fecha_std'] >= '2018-01-01']
-                
-                usd_data['anio'] = usd_data['fecha_std'].dt.year
-                usd_data['trimestre'] = usd_data['fecha_std'].dt.quarter
-                usd_data['periodo_trimestral'] = usd_data['anio'].astype(str) + '-T' + usd_data['trimestre'].astype(str)
-                
-                # Promedio trimestral USD
-                usd_trimestral = usd_data.groupby('periodo_trimestral')['cotizacion_usd'].mean().reset_index()
-                usd_trimestral['precio_medio_usd_trimestre'] = usd_trimestral['cotizacion_usd'].round(2)
-                
-                # Crear dataset mínimo
-                df_minimal = usd_trimestral[['periodo_trimestral', 'precio_medio_usd_trimestre']].copy()
-                df_minimal['turistas_no_residentes_total'] = 0  # Valor por defecto
-                
-                # Agregar eventos
-                def get_eventos_trimestre(periodo):
-                    try:
-                        anio, trim = periodo.split('-T')
-                        trim = int(trim)
-                        eventos = []
-                        if trim == 1: eventos = ["Vendimia", "Vacaciones de Verano"]
-                        elif trim == 2: eventos = ["Otoño"]
-                        elif trim == 3: eventos = ["Vacaciones de Invierno", "Temporada de Esquí"]
-                        elif trim == 4: eventos = ["Primavera", "Fin de Año"]
-                        return "; ".join(eventos) if eventos else "Sin eventos especiales"
-                    except:
-                        return "Sin eventos especiales"
-                
-                df_minimal['eventos_feriados_trimestre'] = df_minimal['periodo_trimestral'].apply(get_eventos_trimestre)
-                df_minimal['anio'] = df_minimal['periodo_trimestral'].str.split('-T').str[0].astype(int)
-                df_minimal['trimestre'] = df_minimal['periodo_trimestral'].str.split('-T').str[1].astype(int)
-                
-                # Guardar dataset mínimo
-                local_data_dir = Path("/usr/local/airflow/data/raw")
-                local_data_dir.mkdir(parents=True, exist_ok=True)
-                
-                output_path = local_data_dir / "mendoza_turismo_final_2018_trimestral.csv"
-                df_minimal.to_csv(output_path, index=False, encoding='utf-8')
-                
-                logger.warning("⚠️ Dataset mínimo creado sin datos de turistas (solo USD + eventos)")
-                return str(output_path)
-            else:
-                logger.error("❌ No hay datos suficientes para crear ningún dataset")
-                return ""
-        
-        # 3. Unificar datos de turistas y agrupar por trimestre
-        df_turistas = pd.concat(turistas_data, ignore_index=True)
-        df_turistas['fecha_std'] = pd.to_datetime(df_turistas['fecha_std'])
-        
-        # Filtrar desde 2018
-        df_turistas = df_turistas[df_turistas['fecha_std'] >= '2018-01-01']
-        
-        # Crear período trimestral
-        df_turistas['anio'] = df_turistas['fecha_std'].dt.year
-        df_turistas['trimestre'] = df_turistas['fecha_std'].dt.quarter
-        df_turistas['periodo_trimestral'] = df_turistas['anio'].astype(str) + '-T' + df_turistas['trimestre'].astype(str)
-        
-        # Buscar columnas de turistas no residentes
-        turistas_cols = []
-        for col in df_turistas.columns:
-            if any(keyword in col.lower() for keyword in ['turista', 'no_residente', 'visitante']):
-                if df_turistas[col].dtype in ['int64', 'float64']:
-                    turistas_cols.append(col)
-        
-        if not turistas_cols:
-            # Si no encuentra columnas específicas, usar todas las numéricas como proxy
-            turistas_cols = df_turistas.select_dtypes(include=['number']).columns.tolist()
-            turistas_cols = [col for col in turistas_cols if col not in ['anio', 'trimestre']]
-        
-        # Agregar turistas por trimestre (suma de aeropuerto + cristo redentor)
-        agg_dict = {col: 'sum' for col in turistas_cols}
-        turistas_trimestral = df_turistas.groupby('periodo_trimestral').agg(agg_dict).reset_index()
-        
-        # Crear columna unificada de turistas no residentes
-        if len(turistas_cols) > 0:
-            turistas_trimestral['turistas_no_residentes_total'] = turistas_trimestral[turistas_cols].sum(axis=1)
-        else:
-            turistas_trimestral['turistas_no_residentes_total'] = 0
-        
-        logger.info(f"📊 Datos turísticos agregados: {len(turistas_trimestral)} trimestres")
-        
-        # 4. Procesar datos USD y calcular promedio trimestral
-        usd_data = None
-        for file_info in processed_files.get("economico", []):
-            if "cotizacion_usd" in file_info["original_file"] or "usd" in file_info["original_file"].lower():
-                try:
-                    df = pd.read_csv(file_info["processed_path"])
-                    if 'fecha_std' in df.columns and 'valor' in df.columns:
-                        usd_data = df[['fecha_std', 'valor']].copy()
-                        usd_data = usd_data.rename(columns={'valor': 'cotizacion_usd'})
-                        logger.info(f"✅ Datos USD incluidos para promedio trimestral: {len(usd_data)} registros")
-                        break
-                except Exception as e:
-                    logger.warning(f"Error procesando USD {file_info['original_file']}: {e}")
-        
-        if usd_data is not None:
-            usd_data['fecha_std'] = pd.to_datetime(usd_data['fecha_std'])
-            usd_data = usd_data[usd_data['fecha_std'] >= '2018-01-01']
-            
-            usd_data['anio'] = usd_data['fecha_std'].dt.year
-            usd_data['trimestre'] = usd_data['fecha_std'].dt.quarter
-            usd_data['periodo_trimestral'] = usd_data['anio'].astype(str) + '-T' + usd_data['trimestre'].astype(str)
-            
-            # Promedio trimestral USD
-            usd_trimestral = usd_data.groupby('periodo_trimestral')['cotizacion_usd'].mean().reset_index()
-            usd_trimestral['precio_medio_usd_trimestre'] = usd_trimestral['cotizacion_usd'].round(2)
-            usd_trimestral = usd_trimestral[['periodo_trimestral', 'precio_medio_usd_trimestre']]
-            
-            logger.info(f"💱 Datos USD procesados: {len(usd_trimestral)} trimestres")
-        else:
-            # Crear DataFrame vacío si no hay datos USD
-            usd_trimestral = pd.DataFrame(columns=['periodo_trimestral', 'precio_medio_usd_trimestre'])
-            logger.warning("⚠️ No se encontraron datos de cotización USD")
-        
-        # 5. Crear columna de eventos/feriados importantes
-        def get_eventos_trimestre(periodo):
-            """Determina si hay eventos importantes en el trimestre."""
+        turismo_files = processed_files.get("turismo", [])
+        logger.info(f"Archivos de turismo procesados: {[f['original_file'] for f in turismo_files]}")
+
+        # DEBUG: Verificar todos los archivos procesados
+        for file_info in turismo_files:
+            logger.info(f"🔍 Archivo: {file_info.get('original_file', 'unknown')}")
+            logger.info(f"   Path: {file_info.get('processed_path', 'unknown')}")
             try:
-                anio, trim = periodo.split('-T')
-                trim = int(trim)
-                eventos = []
+                df_debug = pd.read_csv(file_info["processed_path"])
+                logger.info(f"   Filas: {len(df_debug)}, Columnas: {list(df_debug.columns)}")
+                logger.info(f"   Primeras 3 filas:\n{df_debug.head(3)}")
+            except Exception as e:
+                logger.error(f"   Error leyendo archivo: {e}")
+
+        # Identificar los archivos ETI aeropuerto y cristo redentor
+        aeropuerto_file = None
+        cristo_file = None
+        for file_info in turismo_files:
+            fname = file_info.get("original_file", "").lower()
+            if "aeropuerto" in fname:
+                aeropuerto_file = file_info
+                logger.info(f"✅ Aeropuerto identificado: {fname}")
+            elif "cristo" in fname:
+                cristo_file = file_info
+                logger.info(f"✅ Cristo Redentor identificado: {fname}")
+
+        if not aeropuerto_file:
+            logger.error("❌ No se encontró archivo ETI aeropuerto.")
+            logger.info("Archivos disponibles:")
+            for f in turismo_files:
+                logger.info(f"  - {f.get('original_file', 'unknown')}")
+            return ""
+
+        if not cristo_file:
+            logger.error("❌ No se encontró archivo ETI cristo redentor.")
+            logger.info("Archivos disponibles:")
+            for f in turismo_files:
+                logger.info(f"  - {f.get('original_file', 'unknown')}")
+            return ""
+
+        # Leer archivos con manejo de errores mejorado
+        try:
+            df_aeropuerto_full = pd.read_csv(aeropuerto_file["processed_path"])
+            logger.info(f"📊 Aeropuerto - Total filas: {len(df_aeropuerto_full)}")
+            logger.info(f"📊 Aeropuerto - Columnas: {list(df_aeropuerto_full.columns)}")
+            
+            if "indice_tiempo" not in df_aeropuerto_full.columns:
+                logger.error("❌ Columna 'indice_tiempo' no encontrada en archivo aeropuerto")
+                return ""
+            if "turistas_no_residentes" not in df_aeropuerto_full.columns:
+                logger.error("❌ Columna 'turistas_no_residentes' no encontrada en archivo aeropuerto")
+                return ""
                 
-                if trim == 1:  # Q1: Enero, Febrero, Marzo
-                    eventos.append("Vendimia")  # Marzo
-                    eventos.append("Vacaciones de Verano")  # Enero-Febrero
-                elif trim == 2:  # Q2: Abril, Mayo, Junio
-                    eventos.append("Otoño")  # Temporada media
-                elif trim == 3:  # Q3: Julio, Agosto, Septiembre
-                    eventos.append("Vacaciones de Invierno")  # Julio
-                    eventos.append("Temporada de Esquí")  # Julio-Agosto
-                elif trim == 4:  # Q4: Octubre, Noviembre, Diciembre
-                    eventos.append("Primavera")  # Temporada alta pre-verano
-                    eventos.append("Fin de Año")  # Diciembre
+            df_aeropuerto = df_aeropuerto_full[["indice_tiempo", "turistas_no_residentes"]].copy()
+            logger.info(f"📊 Aeropuerto filtrado - Filas: {len(df_aeropuerto)}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error leyendo archivo aeropuerto: {e}")
+            return ""
+
+        try:
+            df_cristo_full = pd.read_csv(cristo_file["processed_path"])
+            logger.info(f"📊 Cristo Redentor - Total filas: {len(df_cristo_full)}")
+            logger.info(f"📊 Cristo Redentor - Columnas: {list(df_cristo_full.columns)}")
+            
+            if "indice_tiempo" not in df_cristo_full.columns:
+                logger.error("❌ Columna 'indice_tiempo' no encontrada en archivo cristo redentor")
+                return ""
+            if "turistas_no_residentes" not in df_cristo_full.columns:
+                logger.error("❌ Columna 'turistas_no_residentes' no encontrada en archivo cristo redentor")
+                return ""
                 
-                return "; ".join(eventos) if eventos else "Sin eventos especiales"
-            except:
-                return "Sin eventos especiales"
+            df_cristo = df_cristo_full[["indice_tiempo", "turistas_no_residentes"]].copy()
+            logger.info(f"📊 Cristo Redentor filtrado - Filas: {len(df_cristo)}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error leyendo archivo cristo redentor: {e}")
+            return ""
+
+        # Mostrar datos antes de agrupar
+        logger.info(f"Aeropuerto antes de agrupar:\n{df_aeropuerto.head()}")
+        logger.info(f"Cristo Redentor antes de agrupar:\n{df_cristo.head()}")
+
+        # Agrupar por indice_tiempo
+        agg_aeropuerto = df_aeropuerto.groupby("indice_tiempo", as_index=False)["turistas_no_residentes"].sum()
+        agg_cristo = df_cristo.groupby("indice_tiempo", as_index=False)["turistas_no_residentes"].sum()
+
+        logger.info(f"Aeropuerto agrupado:\n{agg_aeropuerto}")
+        logger.info(f"Cristo Redentor agrupado:\n{agg_cristo}")
+
+        agg_aeropuerto = agg_aeropuerto.rename(columns={"turistas_no_residentes": "turistas_aeropuerto"})
+        agg_cristo = agg_cristo.rename(columns={"turistas_no_residentes": "turistas_cristo"})
+
+        # Merge con información detallada
+        logger.info("🔗 Realizando merge de aeropuerto y cristo redentor...")
+        turistas_agg = pd.merge(agg_aeropuerto, agg_cristo, on="indice_tiempo", how="outer")
+        logger.info(f"Resultado del merge:\n{turistas_agg}")
         
-        # 6. Consolidar dataset final
-        df_final = turistas_trimestral[['periodo_trimestral', 'turistas_no_residentes_total']].copy()
+        turistas_agg["turistas_aeropuerto"] = turistas_agg["turistas_aeropuerto"].fillna(0)
+        turistas_agg["turistas_cristo"] = turistas_agg["turistas_cristo"].fillna(0)
+        turistas_agg["turistas_no_residentes_total"] = turistas_agg["turistas_aeropuerto"] + turistas_agg["turistas_cristo"]
+
+        logger.info(f"✅ Suma final por indice_tiempo:\n{turistas_agg}")
+
+        # Verificar que la suma sea correcta
+        for _, row in turistas_agg.iterrows():
+            aeropuerto_val = row["turistas_aeropuerto"]
+            cristo_val = row["turistas_cristo"]
+            total_val = row["turistas_no_residentes_total"]
+            logger.info(f"  {row['indice_tiempo']}: {aeropuerto_val} + {cristo_val} = {total_val}")
+
+        # --- Scraping del dólar oficial mensual ---
+        try:
+            url_dolar = "https://estudiodelamo.com/cotizacion-historica-dolar-peso-argentina/"
+            logger.info(f"Descargando cotización histórica del dólar desde {url_dolar}")
+            resp = requests.get(url_dolar, timeout=60)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Buscar la tabla principal
+            table = soup.find("table")
+            if table is None:
+                logger.warning("No se encontró la tabla de cotización del dólar. Continuando sin datos USD.")
+                df_dolar_trimestral = pd.DataFrame(columns=["indice_tiempo", "precio_promedio_usd"])
+            else:
+                # Leer la tabla con pandas
+                df_dolar = pd.read_html(str(table))[0]
+                df_dolar.columns = [str(c).strip().lower().replace(" ", "_") for c in df_dolar.columns]
+                df_dolar = df_dolar[["año", "mes", "dólar_oficial"]]
+                df_dolar["año"] = df_dolar["año"].astype(int)
+                df_dolar["mes"] = df_dolar["mes"].astype(int)
+                df_dolar["dólar_oficial"] = (
+                    df_dolar["dólar_oficial"]
+                    .astype(str)
+                    .str.replace(",", ".")
+                    .str.replace("$", "")
+                    .str.replace(" ", "")
+                    .astype(float)
+                )
+
+                # Crear columna de trimestre
+                def mes_a_trimestre(mes):
+                    if mes in [1,2,3]: return "Q1"
+                    if mes in [4,5,6]: return "Q2"
+                    if mes in [7,8,9]: return "Q3"
+                    if mes in [10,11,12]: return "Q4"
+                    return None
+                df_dolar["trimestre"] = df_dolar["mes"].apply(mes_a_trimestre)
+                df_dolar["indice_tiempo"] = df_dolar["año"].astype(str) + df_dolar["trimestre"]
+
+                # Calcular promedio trimestral
+                df_dolar_trimestral = (
+                    df_dolar.groupby("indice_tiempo", as_index=False)["dólar_oficial"].mean()
+                    .rename(columns={"dólar_oficial": "precio_promedio_usd"})
+                )
+                logger.info(f"✅ Datos USD procesados: {len(df_dolar_trimestral)} trimestres")
+        
+        except Exception as e:
+            logger.warning(f"Error procesando datos USD: {e}. Continuando sin datos USD.")
+            df_dolar_trimestral = pd.DataFrame(columns=["indice_tiempo", "precio_promedio_usd"])
+
+        # Preparar dataset final
+        df_final = turistas_agg[["indice_tiempo", "turistas_no_residentes_total"]].copy()
         
         # Merge con datos USD
-        if not usd_trimestral.empty:
-            df_final = df_final.merge(usd_trimestral, on='periodo_trimestral', how='left')
+        if not df_dolar_trimestral.empty:
+            df_final = df_final.merge(df_dolar_trimestral, on="indice_tiempo", how="left")
         else:
-            df_final['precio_medio_usd_trimestre'] = None
-        
-        # Agregar eventos
-        df_final['eventos_feriados_trimestre'] = df_final['periodo_trimestral'].apply(get_eventos_trimestre)
-        
-        # Agregar metadatos temporales
-        df_final['anio'] = df_final['periodo_trimestral'].str.split('-T').str[0].astype(int)
-        df_final['trimestre'] = df_final['periodo_trimestral'].str.split('-T').str[1].astype(int)
-        
-        # Ordenar por período
-        df_final = df_final.sort_values(['anio', 'trimestre']).reset_index(drop=True)
-        
-        # 7. Guardar dataset final
+            df_final["precio_promedio_usd"] = None
+
+        # Eventos importantes por trimestre
+        eventos = {
+            "Q1": ["Fiesta Nacional de la Vendimia", "Vacaciones de Verano"],
+            "Q2": [],
+            "Q3": ["Vacaciones de Invierno", "Temporada de Esquí"],
+            "Q4": ["Fin de Año", "Primavera"]
+        }
+        def evento_importante(indice_tiempo):
+            if isinstance(indice_tiempo, str) and "Q" in indice_tiempo:
+                q = indice_tiempo.split("Q")[-1]
+                return "; ".join(eventos.get(f"Q{q}", [])) if eventos.get(f"Q{q}", []) else "Sin evento"
+            return "Sin evento"
+        df_final["evento_importante"] = df_final["indice_tiempo"].apply(evento_importante)
+
+        # Guardar CSV final
         local_data_dir = Path("/usr/local/airflow/data/raw")
         local_data_dir.mkdir(parents=True, exist_ok=True)
-        
-        output_path = local_data_dir / "mendoza_turismo_final_2018_trimestral.csv"
-        df_final.to_csv(output_path, index=False, encoding='utf-8')
-        
-        # También guardar en curated
-        curated_path = Path(directories["curated"]) / "mendoza_turismo_final_trimestral.csv"
-        df_final.to_csv(curated_path, index=False, encoding='utf-8')
-        
-        # Crear resumen del dataset final
-        dataset_summary = {
-            "creation_timestamp": datetime.now().isoformat(),
-            "descripcion": "Dataset final trimestral para modelado de demanda hotelera Mendoza",
-            "periodo_datos": "2018 en adelante",
-            "frecuencia": "Trimestral",
-            "total_trimestres": len(df_final),
-            "rango_temporal": f"{df_final['periodo_trimestral'].min()} - {df_final['periodo_trimestral'].max()}",
-            "columnas_finales": [
-                "periodo_trimestral",
-                "turistas_no_residentes_total", 
-                "precio_medio_usd_trimestre",
-                "eventos_feriados_trimestre",
-                "anio",
-                "trimestre"
-            ],
-            "estadisticas": {
-                "turistas_promedio": float(df_final['turistas_no_residentes_total'].mean()),
-                "turistas_min": int(df_final['turistas_no_residentes_total'].min()),
-                "turistas_max": int(df_final['turistas_no_residentes_total'].max()),
-                "usd_promedio": float(df_final['precio_medio_usd_trimestre'].mean()) if df_final['precio_medio_usd_trimestre'].notna().any() else None
-            },
-            "archivos": {
-                "local": str(output_path),
-                "pipeline": str(curated_path)
-            }
-        }
-        
-        summary_path = local_data_dir / "dataset_final_summary.json"
-        with open(summary_path, 'w', encoding='utf-8') as f:
-            json.dump(dataset_summary, f, indent=2, ensure_ascii=False)
-        
-        logger.info("=" * 80)
-        logger.info("🎯 DATASET FINAL TRIMESTRAL CREADO EXITOSAMENTE")
-        logger.info("=" * 80)
-        logger.info(f"Trimestres procesados: {len(df_final)}")
-        logger.info(f"Rango temporal: {df_final['periodo_trimestral'].min()} - {df_final['periodo_trimestral'].max()}")
-        logger.info(f"Turistas promedio por trimestre: {df_final['turistas_no_residentes_total'].mean():,.0f}")
-        logger.info(f"Archivo final: {output_path}")
-        logger.info(f"Resumen: {summary_path}")
-        logger.info("=" * 80)
-        
-        return str(output_path)
-        
-    except Exception as e:
-        logger.error(f"❌ Error creando dataset final: {e}")
-        return ""
+        output_path = local_data_dir / "mendoza_turismo_final_filtrado.csv"
+        df_final.to_csv(output_path, index=False, encoding="utf-8")
 
+        logger.info(f"✅ CSV final filtrado creado: {output_path} ({len(df_final)} filas)")
+        logger.info(f"Columnas: {list(df_final.columns)}")
+        logger.info(f"Dataset final:\n{df_final}")
+        return str(output_path)
+
+    except Exception as e:
+        logger.error(f"❌ Error creando dataset final filtrado: {e}")
+        import traceback
+        logger.error(f"Traceback completo: {traceback.format_exc()}")
+        return ""
+        
 # ─── DAG Definition Mejorado ───────────────────────────────────────────────────
 
 with DAG(
@@ -1578,6 +1709,7 @@ with DAG(
     - Variables económicas y estacionales
     - Metadata y reportes de calidad
     
+       
     **Objetivo**: Base de datos robusta para modelo predictivo de demanda hotelera
     """,
 ) as dag:

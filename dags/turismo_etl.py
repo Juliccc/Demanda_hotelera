@@ -596,6 +596,11 @@ def process_and_standardize_data(
             else:
                 files.append(download)
         
+        # DEBUG: Mostrar todos los archivos descargados
+        logger.info(f"📥 Total archivos descargados: {len(files)}")
+        for file_info in files:
+            logger.info(f"  📄 {file_info.get('name', 'unknown')}: {file_info.get('status', 'unknown')} - {file_info.get('category', 'unknown')}")
+        
         processed_files = {
             "turismo": [],
             "economico": [], 
@@ -606,12 +611,16 @@ def process_and_standardize_data(
         processed_dir = Path(directories["processed"])
         
         for file_info in files:
-            # Incluir archivos pequeños pero válidos
-            if not file_info.get("status", "").startswith("downloaded"):
+            # Incluir archivos pequeños pero válidos - MEJORAR LA CONDICIÓN
+            status = file_info.get("status", "")
+            if not (status.startswith("downloaded") or status == "cached"):
+                logger.warning(f"⚠️ Saltando archivo con status: {status} - {file_info.get('name', 'unknown')}")
                 continue
             
             path = file_info.get("path", "")
             category = file_info.get("category", "general")
+            
+            logger.info(f"🔄 Procesando: {file_info.get('name', 'unknown')} - Categoría: {category}")
             
             try:
                 if path.endswith(".csv"):
@@ -620,16 +629,43 @@ def process_and_standardize_data(
                     # Log adicional para archivos ETI pequeños
                     if "eti" in file_info.get("name", "").lower():
                         logger.info(f"📊 Procesando ETI {file_info['name']}: {len(df)} filas, columnas: {list(df.columns)}")
-                        logger.info(f"📊 Primeras 10 filas del archivo original:\n{df.head(10)}")
+                        logger.info(f"📊 Primeras 5 filas del archivo original:\n{df.head()}")
                         
-                        # DEBUG ESPECÍFICO PARA AEROPUERTO: Mostrar todas las filas si es pequeño
-                        if "aeropuerto" in file_info.get("name", "").lower():
-                            logger.info(f"🔍 AEROPUERTO - Total de filas en archivo original: {len(df)}")
-                            if len(df) <= 50:  # Si es pequeño, mostrar todo
-                                logger.info(f"🔍 AEROPUERTO - Archivo completo:\n{df}")
-                            else:
-                                logger.info(f"🔍 AEROPUERTO - Primeras 20 filas:\n{df.head(20)}")
-                                logger.info(f"🔍 AEROPUERTO - Últimas 20 filas:\n{df.tail(20)}")
+                        # PROCESAR ETI CORRECTAMENTE - Buscar columna de fecha
+                        fecha_col = None
+                        for col in df.columns:
+                            if col.lower() in ['fecha', 'periodo', 'period', 'anio_trimestre', 'trimestre']:
+                                fecha_col = col
+                                break
+                        
+                        if fecha_col:
+                            logger.info(f"✅ ETI {file_info['name']} - Columna de fecha encontrada: {fecha_col}")
+                            logger.info(f"📅 Valores únicos en {fecha_col}: {df[fecha_col].unique()}")
+                            
+                            # Convertir a datetime y crear indice_tiempo
+                            try:
+                                df[fecha_col] = pd.to_datetime(df[fecha_col], errors='coerce')
+                                df['indice_tiempo'] = df[fecha_col]
+                                df['fecha_std'] = df[fecha_col]  # IMPORTANTE: Crear fecha_std
+                                logger.info(f"✅ ETI {file_info['name']} - fecha_std creada exitosamente")
+                            except Exception as e:
+                                logger.error(f"❌ ETI {file_info['name']} - Error creando fecha_std: {e}")
+                        else:
+                            logger.warning(f"⚠️ ETI {file_info['name']} - No se encontró columna de fecha")
+                            # Si no hay columna de fecha, intentar usar indice_tiempo si existe
+                            if 'indice_tiempo' in df.columns:
+                                try:
+                                    df['fecha_std'] = pd.to_datetime(df['indice_tiempo'], errors='coerce')
+                                    logger.info(f"✅ ETI {file_info['name']} - fecha_std creada desde indice_tiempo")
+                                except Exception as e:
+                                    logger.error(f"❌ Error usando indice_tiempo como fecha_std: {e}")
+                            # Si no hay indice_tiempo, intentar usar fecha_std si ya existe
+                            elif 'fecha_std' in df.columns:
+                                try:
+                                    df['fecha_std'] = pd.to_datetime(df['fecha_std'], errors='coerce')
+                                    logger.info(f"✅ ETI {file_info['name']} - fecha_std ya estaba presente")
+                                except Exception as e:
+                                    logger.error(f"❌ Error convirtiendo fecha_std existente: {e}")
                         
                 elif path.endswith(".json"):
                     with open(path, 'r', encoding='utf-8') as f:
@@ -638,6 +674,7 @@ def process_and_standardize_data(
                     # Validación mejorada para diferentes formatos de API
                     if file_info.get("src") == "bcra":
                         logger.info(f"🏦 Procesando datos BCRA: {file_info['name']}")
+                        logger.info(f"🔍 Estructura JSON BCRA: {list(json_data.keys()) if isinstance(json_data, dict) else type(json_data)}")
                         
                         # BCRA API formato: {"results": [{"index":..., "value":...}, ...]}
                         if isinstance(json_data, dict) and "results" in json_data:
@@ -682,18 +719,38 @@ def process_and_standardize_data(
                                     logger.warning(f"Ajustado a longitud mínima: {min_len}")
                                 
                                 df = pd.DataFrame({"fecha": dates, "valor": values})
-                                logger.info(f"✅ BCRA DataFrame creado: {len(df)} registros válidos")
+                                
+                                # IMPORTANTE: Crear fecha_std para BCRA
+                                df['fecha_std'] = pd.to_datetime(df['fecha'], errors='coerce')
+                                logger.info(f"✅ BCRA DataFrame creado: {len(df)} registros válidos con fecha_std")
                                 
                             except Exception as e:
                                 logger.error(f"Error creando DataFrame BCRA: {e}")
                                 continue
                         else:
-                            # Formato genérico si no tiene results
+                            # PROCESAR FORMATO NO ESTÁNDAR DE BCRA
                             logger.warning(f"BCRA formato no estándar en {file_info['name']}")
-                            if isinstance(json_data, list):
-                                df = pd.DataFrame(json_data)
-                            elif isinstance(json_data, dict):
-                                df = pd.DataFrame([json_data])
+                            logger.info(f"🔍 Contenido completo del JSON: {json_data}")
+                            
+                            # Intentar extraer datos del formato actual
+                            if isinstance(json_data, dict):
+                                # Si es dict con 'data', extraer eso
+                                if 'data' in json_data and isinstance(json_data['data'], list):
+                                    data_list = json_data['data']
+                                    if len(data_list) > 0 and isinstance(data_list[0], list) and len(data_list[0]) >= 2:
+                                        # Formato [[fecha, valor], [fecha, valor], ...]
+                                        dates = [item[0] for item in data_list]
+                                        values = [float(item[1]) for item in data_list]
+                                        df = pd.DataFrame({"fecha": dates, "valor": values})
+                                        df['fecha_std'] = pd.to_datetime(df['fecha'], errors='coerce')
+                                        logger.info(f"✅ BCRA formato data extraído: {len(df)} registros")
+                                    else:
+                                        logger.error(f"Formato data BCRA no reconocido: {data_list[:3] if data_list else 'vacío'}")
+                                        continue
+                                else:
+                                    # Formato directo como dict
+                                    df = pd.DataFrame([json_data])
+                                    logger.warning(f"BCRA procesado como dict simple: {len(df)} registros")
                             else:
                                 logger.error(f"Formato JSON BCRA no reconocido: {type(json_data)}")
                                 continue
@@ -728,101 +785,34 @@ def process_and_standardize_data(
                         else:
                             logger.warning(f"Formato JSON no reconocido en {file_info['name']}: {type(json_data)}")
                             continue
-                else:
-                    logger.warning(f"Tipo de archivo no soportado: {path}")
-                    continue
-                
+                        
+                        # Intentar crear fecha_std para otros JSONs
+                        date_columns = ['fecha', 'date', 'periodo', 'period', 'index']
+                        for col in df.columns:
+                            if isinstance(col, str) and col.lower() in date_columns:
+                                try:
+                                    df['fecha_std'] = pd.to_datetime(df[col], errors='coerce')
+                                    logger.info(f"✅ fecha_std creada desde {col}")
+                                    break
+                                except Exception as e:
+                                    logger.warning(f"Error convirtiendo {col} a fecha_std: {e}")
+
                 # Verificar que el DataFrame no esté vacío
                 if df.empty:
                     logger.warning(f"DataFrame vacío generado para {file_info['name']}")
                     continue
                 
-                # AGREGAR UN ÍNDICE DE TIEMPO TEMPORAL PARA DEBUGGING
-                if "eti" in file_info.get("name", "").lower():
-                    # Buscar columnas de fecha/período para crear indice_tiempo
-                    date_col_found = None
-                    for col in df.columns:
-                        if col.lower() in ['fecha', 'periodo', 'period', 'anio_trimestre', 'trimestre']:
-                            date_col_found = col
-                            break
-                    
-                    if date_col_found:
-                        logger.info(f"🔍 ETI {file_info['name']} - Columna de fecha encontrada: {date_col_found}")
-                        logger.info(f"🔍 ETI {file_info['name']} - Valores únicos en {date_col_found}: {df[date_col_found].unique()}")
-                        
-                        # Convertir a datetime y crear indice_tiempo antes de los filtros
-                        try:
-                            df[date_col_found] = pd.to_datetime(df[date_col_found], errors='coerce')
-                            df['indice_tiempo'] = df[date_col_found]
-                            df = df.rename(columns={date_col_found: 'fecha_std'})
-                            logger.info(f"✅ ETI {file_info['name']} - indice_tiempo creado exitosamente")
-                        except Exception as e:
-                            logger.error(f"❌ ETI {file_info['name']} - Error creando indice_tiempo: {e}")
-                    else:
-                        logger.warning(f"⚠️ ETI {file_info['name']} - No se encontró columna de fecha")
-
-                # Estandarizar columnas de fecha con mejor manejo de errores
-                date_columns = ['fecha', 'date', 'periodo', 'period', 'index']
-                date_converted = False
-                
-                for col in df.columns:
-                    if isinstance(col, str) and col.lower() in date_columns:
-                        try:
-                            # Intentar conversión con diferentes formatos
-                            df[col] = pd.to_datetime(df[col], errors='coerce')
-                            
-                            # Verificar cuántos valores se convirtieron exitosamente
-                            valid_dates = df[col].notna().sum()
-                            total_dates = len(df)
-                            
-                            if valid_dates > 0:
-                                df = df.rename(columns={col: 'fecha_std'})
-                                date_converted = True
-                                logger.info(f"✅ Columna {col} convertida a fecha_std: {valid_dates}/{total_dates} válidas")
-                                
-                                # Filtrar filas con fechas inválidas si hay muchas
-                                if valid_dates < total_dates * 0.8:  # Si menos del 80% son válidas
-                                    logger.warning(f"Filtrando {total_dates - valid_dates} filas con fechas inválidas")
-                                    df = df.dropna(subset=['fecha_std'])
-                                
-                                break
-                            else:
-                                logger.warning(f"No se pudieron convertir fechas en columna {col}")
-                        except Exception as e:
-                            logger.warning(f"Error convirtiendo columna {col} a fecha: {e}")
-                            continue
-
-                # Si las columnas son numéricas (0,1), renombrar manualmente
-                if list(df.columns) == [0, 1] and not date_converted:
-                    df.columns = ['fecha_std', 'valor']
-                    try:
-                        df['fecha_std'] = pd.to_datetime(df['fecha_std'], errors='coerce')
-                        # Filtrar fechas inválidas
-                        df = df.dropna(subset=['fecha_std'])
-                        date_converted = True
-                        logger.info(f"✅ Columnas numéricas renombradas y fechas convertidas: {len(df)} registros")
-                    except Exception as e:
-                        logger.warning(f"Error convirtiendo fechas en columnas numéricas: {e}")
-
-                # DEBUG: Mostrar estado después de conversión de fechas para archivos ETI
-                if "eti" in file_info.get("name", "").lower():
-                    logger.info(f"🔍 ETI {file_info['name']} después de conversión fechas: {len(df)} filas")
-                    if 'fecha_std' in df.columns:
-                        logger.info(f"🔍 ETI {file_info['name']} - Rango fechas: {df['fecha_std'].min()} a {df['fecha_std'].max()}")
-
                 # Filtrar datos desde 2018 en adelante para uniformidad
-                if 'fecha_std' in df.columns and date_converted:
+                if 'fecha_std' in df.columns:
                     original_rows = len(df)
-                    df = df[df['fecha_std'] >= '2018-01-01']
-                    filtered_rows = len(df)
-                    if original_rows != filtered_rows:
-                        logger.info(f"📅 Filtro 2018+: {original_rows} -> {filtered_rows} registros en {file_info['name']}")
+                    valid_dates = df['fecha_std'].notna().sum()
+                    logger.info(f"📅 {file_info['name']} - Fechas válidas: {valid_dates}/{original_rows}")
                     
-                    # DEBUG ESPECÍFICO PARA AEROPUERTO después del filtro de fecha
-                    if "aeropuerto" in file_info.get("name", "").lower():
-                        logger.info(f"🔍 AEROPUERTO después filtro 2018+: {len(df)} filas")
-                        if len(df) <= 20:
-                            logger.info(f"🔍 AEROPUERTO después filtro fecha:\n{df}")
+                    if valid_dates > 0:
+                        df = df[df['fecha_std'] >= '2018-01-01']
+                        filtered_rows = len(df)
+                        if original_rows != filtered_rows:
+                            logger.info(f"📅 Filtro 2018+: {original_rows} -> {filtered_rows} registros en {file_info['name']}")
                 
                 # NO FILTRAR POR MENDOZA EN ARCHIVOS ETI - Ya son específicos de Mendoza
                 if category in ["turismo"] and not "eti" in file_info.get("name", "").lower():
@@ -850,13 +840,12 @@ def process_and_standardize_data(
                     logger.warning(f"DataFrame vacío después de filtros para {file_info['name']}")
                     continue
                 
-                # DEBUG FINAL para archivos ETI
-                if "eti" in file_info.get("name", "").lower():
-                    logger.info(f"🔍 ETI {file_info['name']} FINAL: {len(df)} filas, columnas: {list(df.columns)}")
-                    if 'indice_tiempo' in df.columns:
-                        logger.info(f"🔍 ETI {file_info['name']} - índices de tiempo únicos: {df['indice_tiempo'].unique()}")
-                    if 'turistas_no_residentes' in df.columns:
-                        logger.info(f"🔍 ETI {file_info['name']} - suma total turistas: {df['turistas_no_residentes'].sum()}")
+                # DEBUG FINAL para archivos procesados
+                logger.info(f"🔍 {file_info['name']} FINAL: {len(df)} filas, columnas: {list(df.columns)}")
+                logger.info(f"🔍 {file_info['name']} - tiene fecha_std: {'fecha_std' in df.columns}")
+                if 'fecha_std' in df.columns:
+                    valid_dates = df['fecha_std'].notna().sum()
+                    logger.info(f"🔍 {file_info['name']} - fechas válidas: {valid_dates}/{len(df)}")
                 
                 # Guardar archivo procesado
                 output_path = processed_dir / category / f"processed_{file_info['name'].replace('.json', '.csv')}"
@@ -880,17 +869,17 @@ def process_and_standardize_data(
                 # Log adicional para debugging
                 logger.error(f"   Archivo: {path}")
                 logger.error(f"   Categoría: {category}")
-                logger.error(f"   Fuente: {file_info.get('src', 'unknown')}")
+                logger.error(f"   Fuente: {file_info.get("src", "unknown")}")
+                import traceback
+                logger.error(f"   Traceback: {traceback.format_exc()}")
                 continue
         
-        # Log de archivos procesados con fecha_std
+        # Log de resumen final
+        logger.info("📊 RESUMEN DE PROCESAMIENTO:")
         for category, files in processed_files.items():
+            logger.info(f"  📁 {category}: {len(files)} archivos procesados")
             for file_info in files:
-                try:
-                    df = pd.read_csv(file_info["processed_path"])
-                    logger.info(f"📋 {file_info['original_file']} - filas: {len(df)}, tiene fecha_std: {'fecha_std' in df.columns}")
-                except Exception as e:
-                    logger.warning(f"Error verificando archivo procesado {file_info['original_file']}: {e}")
+                logger.info(f"    - {file_info['original_file']}: {file_info['rows']} filas, fecha_std: {file_info['has_date_column']}")
         
         # Resumen de procesamiento
         summary = {
@@ -912,6 +901,8 @@ def process_and_standardize_data(
         
     except Exception as e:
         logger.error(f"❌ Error en procesamiento de datos: {e}")
+        import traceback
+        logger.error(f"Traceback completo: {traceback.format_exc()}")
         return {"error": str(e), "success": False}
 
 @task
@@ -925,62 +916,142 @@ def create_monthly_features_matrix(
             logger.error("No se puede crear matriz de features sin datos procesados")
             return ""
         
+        logger.info("🔧 Iniciando creación de matriz de features...")
+        logger.info(f"Processing summary recibido: {processing_summary}")
+        
         processed_dir = Path(directories["processed"])
         features_dir = Path(directories["features"])
         
         # Diccionario para almacenar series temporales por categoría
         time_series_data = {}
         
+        # DEBUG: Verificar qué archivos hay disponibles
+        processed_files = processing_summary.get("processed_files", {})
+        logger.info(f"📂 Categorías disponibles: {list(processed_files.keys())}")
+        for category, files in processed_files.items():
+            logger.info(f"📁 {category}: {len(files)} archivos")
+            for file_info in files:
+                logger.info(f"  - {file_info.get('original_file', 'unknown')}: {file_info.get('rows', 0)} filas")
+        
         # Procesar cada categoría de datos
-        for category, files in processing_summary.get("processed_files", {}).items():
+        for category, files in processed_files.items():
+            logger.info(f"🔍 Procesando categoría: {category}")
             category_data = []
             
             for file_info in files:
                 try:
-                    df = pd.read_csv(file_info["processed_path"])
+                    file_path = file_info["processed_path"]
+                    logger.info(f"📊 Leyendo archivo: {file_path}")
+                    
+                    # Verificar que el archivo existe
+                    if not Path(file_path).exists():
+                        logger.error(f"❌ Archivo no existe: {file_path}")
+                        continue
+                    
+                    df = pd.read_csv(file_path)
+                    logger.info(f"📈 Archivo leído: {len(df)} filas, columnas: {list(df.columns)}")
                     
                     if 'fecha_std' in df.columns and not df.empty:
-                        df['fecha_std'] = pd.to_datetime(df['fecha_std'])
+                        logger.info(f"✅ Archivo tiene fecha_std y datos: {file_info['original_file']}")
+                        
+                        # Mostrar algunas fechas para debug
+                        logger.info(f"📅 Primeras fechas: {df['fecha_std'].head()}")
+                        
+                        df['fecha_std'] = pd.to_datetime(df['fecha_std'], errors='coerce')
+                        
+                        # Verificar fechas válidas después de conversión
+                        valid_dates = df['fecha_std'].notna().sum()
+                        logger.info(f"📅 Fechas válidas después de conversión: {valid_dates}/{len(df)}")
+                        
+                        if valid_dates == 0:
+                            logger.warning(f"⚠️ No hay fechas válidas en {file_info['original_file']}")
+                            continue
                         
                         # Agregar a nivel mensual
                         df['anio_mes'] = df['fecha_std'].dt.to_period('M')
+                        logger.info(f"📅 Períodos únicos: {df['anio_mes'].unique()}")
                         
                         # Identificar columnas numéricas para agregar
                         numeric_cols = df.select_dtypes(include=['number']).columns
+                        logger.info(f"🔢 Columnas numéricas encontradas: {list(numeric_cols)}")
                         
                         if len(numeric_cols) > 0:
-                            monthly_agg = df.groupby('anio_mes')[numeric_cols].agg(['mean', 'sum', 'count']).reset_index()
-                            monthly_agg.columns = ['anio_mes'] + [f"{col[0]}_{col[1]}" for col in monthly_agg.columns[1:]]
-                            monthly_agg['fuente'] = file_info["original_file"]
-                            category_data.append(monthly_agg)
+                            try:
+                                monthly_agg = df.groupby('anio_mes')[numeric_cols].agg(['mean', 'sum', 'count']).reset_index()
+                                monthly_agg.columns = ['anio_mes'] + [f"{col[0]}_{col[1]}" for col in monthly_agg.columns[1:]]
+                                monthly_agg['fuente'] = file_info["original_file"]
+                                category_data.append(monthly_agg)
+                                
+                                logger.info(f"✅ Agregación mensual exitosa: {len(monthly_agg)} períodos")
+                                logger.info(f"📊 Columnas agregadas: {list(monthly_agg.columns)}")
+                                
+                            except Exception as e:
+                                logger.error(f"❌ Error en agregación mensual: {e}")
+                                continue
+                        else:
+                            logger.warning(f"⚠️ No hay columnas numéricas para agregar en {file_info['original_file']}")
+                    else:
+                        if 'fecha_std' not in df.columns:
+                            logger.warning(f"⚠️ No hay columna fecha_std en {file_info['original_file']}")
+                            logger.info(f"📋 Columnas disponibles: {list(df.columns)}")
+                        if df.empty:
+                            logger.warning(f"⚠️ DataFrame vacío: {file_info['original_file']}")
                             
                 except Exception as e:
-                    logger.warning(f"Error agregando {file_info['processed_path']}: {e}")
+                    logger.error(f"❌ Error procesando {file_info.get('processed_path', 'unknown')}: {e}")
                     continue
             
             if category_data:
                 # Concatenar todos los datos de la categoría
+                logger.info(f"🔗 Concatenando {len(category_data)} DataFrames para categoría {category}")
                 category_df = pd.concat(category_data, ignore_index=True)
                 time_series_data[category] = category_df
+                logger.info(f"✅ Categoría {category} procesada: {len(category_df)} registros")
+            else:
+                logger.warning(f"⚠️ No se generaron datos para categoría {category}")
         
         if not time_series_data:
-            logger.error("No se generaron datos de series temporales")
+            logger.error("❌ No se generaron datos de series temporales")
+            logger.info("🔍 Revisando archivos procesados disponibles:")
+            
+            # Debug adicional: verificar directamente los archivos en disco
+            if processed_dir.exists():
+                for category_dir in processed_dir.iterdir():
+                    if category_dir.is_dir():
+                        logger.info(f"📂 Directorio {category_dir.name}:")
+                        for file_path in category_dir.iterdir():
+                            if file_path.suffix == '.csv':
+                                try:
+                                    df_test = pd.read_csv(file_path)
+                                    logger.info(f"  📄 {file_path.name}: {len(df_test)} filas, columnas: {list(df_test.columns)}")
+                                except Exception as e:
+                                    logger.error(f"  ❌ Error leyendo {file_path.name}: {e}")
+            else:
+                logger.error(f"❌ Directorio processed no existe: {processed_dir}")
+            
             return ""
+        
+        logger.info(f"🎯 Datos de series temporales generados para {len(time_series_data)} categorías")
         
         # Crear matriz unificada
         base_periods = None
         unified_features = None
         
         for category, df in time_series_data.items():
+            logger.info(f"🔧 Procesando categoría {category} para matriz unificada")
+            
             if df.empty:
+                logger.warning(f"⚠️ DataFrame vacío para categoría {category}")
                 continue
                 
             # Crear rango de períodos base
             if base_periods is None:
                 min_period = df['anio_mes'].min()
                 max_period = df['anio_mes'].max()
+                logger.info(f"📅 Rango de períodos: {min_period} a {max_period}")
                 base_periods = pd.period_range(start=min_period, end=max_period, freq='M')
                 unified_features = pd.DataFrame({'anio_mes': base_periods})
+                logger.info(f"📅 Períodos base creados: {len(base_periods)} meses")
             
             # Agregar features de esta categoría
             category_features = df.groupby('anio_mes').agg({
@@ -990,8 +1061,11 @@ def create_monthly_features_matrix(
             # Renombrar columnas con prefijo de categoría
             category_features.columns = ['anio_mes'] + [f"{category}_{col}" for col in category_features.columns[1:]]
             
+            logger.info(f"🏷️ Features para {category}: {list(category_features.columns)}")
+            
             # Merge con matriz unificada
             unified_features = unified_features.merge(category_features, on='anio_mes', how='left')
+            logger.info(f"🔗 Merge completado, columnas totales: {len(unified_features.columns)}")
         
         # Agregar variables derivadas
         unified_features['anio'] = unified_features['anio_mes'].dt.year
@@ -1011,6 +1085,8 @@ def create_monthly_features_matrix(
         
         # Convertir anio_mes a string para compatibilidad
         unified_features['anio_mes_str'] = unified_features['anio_mes'].astype(str)
+        
+        logger.info(f"🎯 Matriz final: {len(unified_features)} filas x {len(unified_features.columns)} columnas")
         
         # Guardar matriz de features
         features_path = features_dir / "monthly_features_matrix.csv"
@@ -1041,14 +1117,14 @@ def create_monthly_features_matrix(
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(features_metadata, f, indent=2, ensure_ascii=False)
         
-        logger.info(f"Matriz de features creada: {len(unified_features)} meses x {len(unified_features.columns)} variables")
-        logger.info(f"Rango temporal: {features_metadata['date_range']}")
-        logger.info(f"Datos faltantes: {features_metadata['missing_data_percentage']}%")
+        logger.info(f"✅ Matriz de features creada: {len(unified_features)} meses x {len(unified_features.columns)} variables")
+        logger.info(f"📅 Rango temporal: {features_metadata['date_range']}")
+        logger.info(f"❓ Datos faltantes: {features_metadata['missing_data_percentage']}%")
         
         return str(features_path)
         
     except Exception as e:
-        logger.error(f"Error creando matriz de features: {e}")
+        logger.error(f"❌ Error creando matriz de features: {e}")
         return ""
 
 @task
@@ -1474,7 +1550,9 @@ def create_final_mendoza_dataset(
 
         processed_files = processing_summary.get("processed_files", {})
         turismo_files = processed_files.get("turismo", [])
+        economico_files = processed_files.get("economico", [])
         logger.info(f"Archivos de turismo procesados: {[f['original_file'] for f in turismo_files]}")
+        logger.info(f"Archivos económicos procesados: {[f['original_file'] for f in economico_files]}")
 
         # DEBUG: Verificar todos los archivos procesados
         for file_info in turismo_files:
@@ -1584,63 +1662,67 @@ def create_final_mendoza_dataset(
             total_val = row["turistas_no_residentes_total"]
             logger.info(f"  {row['indice_tiempo']}: {aeropuerto_val} + {cristo_val} = {total_val}")
 
-        # --- Scraping del dólar oficial mensual ---
-        try:
-            url_dolar = "https://estudiodelamo.com/cotizacion-historica-dolar-peso-argentina/"
-            logger.info(f"Descargando cotización histórica del dólar desde {url_dolar}")
-            resp = requests.get(url_dolar, timeout=60)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            # Buscar la tabla principal
-            table = soup.find("table")
-            if table is None:
-                logger.warning("No se encontró la tabla de cotización del dólar. Continuando sin datos USD.")
-                df_dolar_trimestral = pd.DataFrame(columns=["indice_tiempo", "precio_promedio_usd"])
-            else:
-                # Leer la tabla con pandas
-                df_dolar = pd.read_html(str(table))[0]
-                df_dolar.columns = [str(c).strip().lower().replace(" ", "_") for c in df_dolar.columns]
-                df_dolar = df_dolar[["año", "mes", "dólar_oficial"]]
-                df_dolar["año"] = df_dolar["año"].astype(int)
-                df_dolar["mes"] = df_dolar["mes"].astype(int)
-                df_dolar["dólar_oficial"] = (
-                    df_dolar["dólar_oficial"]
-                    .astype(str)
-                    .str.replace(",", ".")
-                    .str.replace("$", "")
-                    .str.replace(" ", "")
-                    .astype(float)
-                )
-
-                # Crear columna de trimestre
-                def mes_a_trimestre(mes):
-                    if mes in [1,2,3]: return "Q1"
-                    if mes in [4,5,6]: return "Q2"
-                    if mes in [7,8,9]: return "Q3"
-                    if mes in [10,11,12]: return "Q4"
-                    return None
-                df_dolar["trimestre"] = df_dolar["mes"].apply(mes_a_trimestre)
-                df_dolar["indice_tiempo"] = df_dolar["año"].astype(str) + df_dolar["trimestre"]
-
-                # Calcular promedio trimestral
-                df_dolar_trimestral = (
-                    df_dolar.groupby("indice_tiempo", as_index=False)["dólar_oficial"].mean()
-                    .rename(columns={"dólar_oficial": "precio_promedio_usd"})
-                )
-                logger.info(f"✅ Datos USD procesados: {len(df_dolar_trimestral)} trimestres")
+        # --- Procesar datos USD desde archivos BCRA en lugar de scraping ---
+        df_dolar_trimestral = pd.DataFrame(columns=["indice_tiempo", "precio_promedio_usd"])
         
-        except Exception as e:
-            logger.warning(f"Error procesando datos USD: {e}. Continuando sin datos USD.")
-            df_dolar_trimestral = pd.DataFrame(columns=["indice_tiempo", "precio_promedio_usd"])
+        # Buscar archivo BCRA USD procesado
+        bcra_usd_file = None
+        for file_info in economico_files:
+            fname = file_info.get("original_file", "").lower()
+            if "usd" in fname or "cotizacion" in fname or "bcra" in fname:
+                bcra_usd_file = file_info
+                logger.info(f"✅ Archivo BCRA USD identificado: {fname}")
+                break
+        
+        if bcra_usd_file:
+            try:
+                logger.info(f"💰 Procesando datos USD desde BCRA: {bcra_usd_file['processed_path']}")
+                df_bcra = pd.read_csv(bcra_usd_file["processed_path"])
+                logger.info(f"📊 BCRA USD - Total filas: {len(df_bcra)}")
+                logger.info(f"📊 BCRA USD - Columnas: {list(df_bcra.columns)}")
+                logger.info(f"📊 BCRA USD - Primeras 5 filas:\n{df_bcra.head()}")
+                
+                if 'fecha_std' in df_bcra.columns and 'valor' in df_bcra.columns and not df_bcra.empty:
+                    # Convertir fecha_std a datetime si no lo está
+                    df_bcra['fecha_std'] = pd.to_datetime(df_bcra['fecha_std'], errors='coerce')
+                    
+                    # Crear trimestre a partir de fecha
+                    df_bcra['year'] = df_bcra['fecha_std'].dt.year
+                    df_bcra['quarter'] = df_bcra['fecha_std'].dt.quarter
+                    df_bcra['indice_tiempo'] = df_bcra['year'].astype(str) + 'Q' + df_bcra['quarter'].astype(str)
+                    
+                    # Calcular promedio trimestral
+                    df_dolar_trimestral = (
+
+                        df_bcra.groupby("indice_tiempo", as_index=False)["valor"].mean()
+                        .rename(columns={"valor": "precio_promedio_usd"})
+                    )
+                    
+                    logger.info(f"✅ Datos USD BCRA procesados: {len(df_dolar_trimestral)} trimestres")
+                    logger.info(f"📊 USD trimestral:\n{df_dolar_trimestral}")
+                    
+                else:
+                    logger.warning(f"⚠️ Archivo BCRA no tiene las columnas esperadas: {list(df_bcra.columns)}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error procesando archivo BCRA USD: {e}")
+                logger.error(f"Archivo: {bcra_usd_file['processed_path']}")
+        else:
+            logger.warning("⚠️ No se encontró archivo BCRA USD procesado")
+            logger.info("Archivos económicos disponibles:")
+            for f in economico_files:
+                logger.info(f"  - {f.get('original_file', 'unknown')}")
 
         # Preparar dataset final
         df_final = turistas_agg[["indice_tiempo", "turistas_no_residentes_total"]].copy()
         
         # Merge con datos USD
         if not df_dolar_trimestral.empty:
+            logger.info(f"🔗 Realizando merge con datos USD")
             df_final = df_final.merge(df_dolar_trimestral, on="indice_tiempo", how="left")
+            logger.info(f"✅ Merge USD completado. Datos finales:\n{df_final}")
         else:
+            logger.warning("⚠️ No hay datos USD disponibles, agregando columna vacía")
             df_final["precio_promedio_usd"] = None
 
         # Eventos importantes por trimestre

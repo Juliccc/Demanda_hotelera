@@ -1542,276 +1542,222 @@ def create_unified_mendoza_dataset(
 @task
 def create_final_mendoza_dataset(
     processing_summary: Dict[str, Any],
+    usd_quarterly: Dict[str, Any],
     directories: Dict[str, str]
 ) -> str:
-    """Crea dataset final trimestral filtrado y limpio para modelado."""
+    """Crea dataset final trimestral con USD sincronizado."""
     try:
-        logger.info("🎯 Creando dataset final filtrado para modelado...")
+        logger.info("🎯 Creando dataset final con USD desde Investing.com...")
 
         processed_files = processing_summary.get("processed_files", {})
         turismo_files = processed_files.get("turismo", [])
-        economico_files = processed_files.get("economico", [])
-        logger.info(f"Archivos de turismo procesados: {[f['original_file'] for f in turismo_files]}")
-        logger.info(f"Archivos económicos procesados: {[f['original_file'] for f in economico_files]}")
-
-        # DEBUG: Verificar todos los archivos procesados
-        for file_info in turismo_files:
-            logger.info(f"🔍 Archivo: {file_info.get('original_file', 'unknown')}")
-            logger.info(f"   Path: {file_info.get('processed_path', 'unknown')}")
-            try:
-                df_debug = pd.read_csv(file_info["processed_path"])
-                logger.info(f"   Filas: {len(df_debug)}, Columnas: {list(df_debug.columns)}")
-                logger.info(f"   Primeras 3 filas:\n{df_debug.head(3)}")
-            except Exception as e:
-                logger.error(f"   Error leyendo archivo: {e}")
-
-        # Identificar los archivos ETI aeropuerto y cristo redentor
+        
+        # Identificar archivos ETI
         aeropuerto_file = None
         cristo_file = None
         for file_info in turismo_files:
             fname = file_info.get("original_file", "").lower()
             if "aeropuerto" in fname:
                 aeropuerto_file = file_info
-                logger.info(f"✅ Aeropuerto identificado: {fname}")
             elif "cristo" in fname:
                 cristo_file = file_info
-                logger.info(f"✅ Cristo Redentor identificado: {fname}")
 
-        if not aeropuerto_file:
-            logger.error("❌ No se encontró archivo ETI aeropuerto.")
-            logger.info("Archivos disponibles:")
-            for f in turismo_files:
-                logger.info(f"  - {f.get('original_file', 'unknown')}")
+        if not aeropuerto_file or not cristo_file:
+            logger.error("❌ No se encontraron archivos ETI necesarios")
             return ""
 
-        if not cristo_file:
-            logger.error("❌ No se encontró archivo ETI cristo redentor.")
-            logger.info("Archivos disponibles:")
-            for f in turismo_files:
-                logger.info(f"  - {f.get('original_file', 'unknown')}")
-            return ""
-
-        # Leer archivos con manejo de errores mejorado
-        try:
-            df_aeropuerto_full = pd.read_csv(aeropuerto_file["processed_path"])
-            logger.info(f"📊 Aeropuerto - Total filas: {len(df_aeropuerto_full)}")
-            logger.info(f"📊 Aeropuerto - Columnas: {list(df_aeropuerto_full.columns)}")
-            
-            if "indice_tiempo" not in df_aeropuerto_full.columns:
-                logger.error("❌ Columna 'indice_tiempo' no encontrada en archivo aeropuerto")
-                return ""
-            if "turistas_no_residentes" not in df_aeropuerto_full.columns:
-                logger.error("❌ Columna 'turistas_no_residentes' no encontrada en archivo aeropuerto")
-                return ""
-                
-            df_aeropuerto = df_aeropuerto_full[["indice_tiempo", "turistas_no_residentes"]].copy()
-            logger.info(f"📊 Aeropuerto filtrado - Filas: {len(df_aeropuerto)}")
-            
-        except Exception as e:
-            logger.error(f"❌ Error leyendo archivo aeropuerto: {e}")
-            return ""
-
-        try:
-            df_cristo_full = pd.read_csv(cristo_file["processed_path"])
-            logger.info(f"📊 Cristo Redentor - Total filas: {len(df_cristo_full)}")
-            logger.info(f"📊 Cristo Redentor - Columnas: {list(df_cristo_full.columns)}")
-            
-            if "indice_tiempo" not in df_cristo_full.columns:
-                logger.error("❌ Columna 'indice_tiempo' no encontrada en archivo cristo redentor")
-                return ""
-            if "turistas_no_residentes" not in df_cristo_full.columns:
-                logger.error("❌ Columna 'turistas_no_residentes' no encontrada en archivo cristo redentor")
-                return ""
-                
-            df_cristo = df_cristo_full[["indice_tiempo", "turistas_no_residentes"]].copy()
-            logger.info(f"📊 Cristo Redentor filtrado - Filas: {len(df_cristo)}")
-            
-        except Exception as e:
-            logger.error(f"❌ Error leyendo archivo cristo redentor: {e}")
-            return ""
-
-        # Mostrar datos antes de agrupar
-        logger.info(f"Aeropuerto antes de agrupar:\n{df_aeropuerto.head()}")
-        logger.info(f"Cristo Redentor antes de agrupar:\n{df_cristo.head()}")
+        # Procesar datos de turismo
+        df_aeropuerto_full = pd.read_csv(aeropuerto_file["processed_path"])
+        df_cristo_full = pd.read_csv(cristo_file["processed_path"])
+        
+        df_aeropuerto = df_aeropuerto_full[["indice_tiempo", "turistas_no_residentes"]].copy()
+        df_cristo = df_cristo_full[["indice_tiempo", "turistas_no_residentes"]].copy()
 
         # Agrupar por indice_tiempo
         agg_aeropuerto = df_aeropuerto.groupby("indice_tiempo", as_index=False)["turistas_no_residentes"].sum()
         agg_cristo = df_cristo.groupby("indice_tiempo", as_index=False)["turistas_no_residentes"].sum()
 
-        logger.info(f"Aeropuerto agrupado:\n{agg_aeropuerto}")
-        logger.info(f"Cristo Redentor agrupado:\n{agg_cristo}")
-
         agg_aeropuerto = agg_aeropuerto.rename(columns={"turistas_no_residentes": "turistas_aeropuerto"})
         agg_cristo = agg_cristo.rename(columns={"turistas_no_residentes": "turistas_cristo"})
 
-        # Merge con información detallada
-        logger.info("🔗 Realizando merge de aeropuerto y cristo redentor...")
+        # Merge datos de turismo
         turistas_agg = pd.merge(agg_aeropuerto, agg_cristo, on="indice_tiempo", how="outer")
-        logger.info(f"Resultado del merge:\n{turistas_agg}")
-        
         turistas_agg["turistas_aeropuerto"] = turistas_agg["turistas_aeropuerto"].fillna(0)
         turistas_agg["turistas_cristo"] = turistas_agg["turistas_cristo"].fillna(0)
         turistas_agg["turistas_no_residentes_total"] = turistas_agg["turistas_aeropuerto"] + turistas_agg["turistas_cristo"]
 
-        logger.info(f"✅ Suma final por indice_tiempo:\n{turistas_agg}")
+        logger.info(f"✅ Datos de turismo procesados: {len(turistas_agg)} trimestres")
 
-        # Verificar que la suma sea correcta
-        for _, row in turistas_agg.iterrows():
-            aeropuerto_val = row["turistas_aeropuerto"]
-            cristo_val = row["turistas_cristo"]
-            total_val = row["turistas_no_residentes_total"]
-            logger.info(f"  {row['indice_tiempo']}: {aeropuerto_val} + {cristo_val} = {total_val}")
+        # Preparar dataset final con datos de turismo
+        df_final = turistas_agg[["indice_tiempo", "turistas_no_residentes_total", "turistas_aeropuerto", "turistas_cristo"]].copy()
 
-        # --- Procesar datos USD desde archivos BCRA en lugar de scraping ---
-        df_dolar_trimestral = pd.DataFrame(columns=["indice_tiempo", "precio_promedio_usd"])
-        
-        # Buscar archivo BCRA USD procesado
-        bcra_usd_file = None
-        for file_info in economico_files:
-            fname = file_info.get("original_file", "").lower()
-            if "usd" in fname or "cotizacion" in fname or "bcra" in fname:
-                bcra_usd_file = file_info
-                logger.info(f"✅ Archivo BCRA USD identificado: {fname}")
-                break
-        
-        if bcra_usd_file:
-            try:
-                logger.info(f"💰 Procesando datos USD desde BCRA: {bcra_usd_file['processed_path']}")
-                df_bcra = pd.read_csv(bcra_usd_file["processed_path"])
-                logger.info(f"📊 BCRA USD - Total filas: {len(df_bcra)}")
-                logger.info(f"📊 BCRA USD - Columnas: {list(df_bcra.columns)}")
-                logger.info(f"📊 BCRA USD - Primeras 5 filas:\n{df_bcra.head()}")
-                
-                if 'fecha_std' in df_bcra.columns and 'valor' in df_bcra.columns and not df_bcra.empty:
-                    # Convertir fecha_std a datetime si no lo está
-                    df_bcra['fecha_std'] = pd.to_datetime(df_bcra['fecha_std'], errors='coerce')
-                    
-                    # Crear trimestre a partir de fecha
-                    df_bcra['year'] = df_bcra['fecha_std'].dt.year
-                    df_bcra['quarter'] = df_bcra['fecha_std'].dt.quarter
-                    df_bcra['indice_tiempo'] = df_bcra['year'].astype(str) + 'Q' + df_bcra['quarter'].astype(str)
-                    
-                    # Calcular promedio trimestral
-                    df_dolar_trimestral = (
-
-                        df_bcra.groupby("indice_tiempo", as_index=False)["valor"].mean()
-                        .rename(columns={"valor": "precio_promedio_usd"})
-                    )
-                    
-                    logger.info(f"✅ Datos USD BCRA procesados: {len(df_dolar_trimestral)} trimestres")
-                    logger.info(f"📊 USD trimestral:\n{df_dolar_trimestral}")
-                    
-                else:
-                    logger.warning(f"⚠️ Archivo BCRA no tiene las columnas esperadas: {list(df_bcra.columns)}")
-                    
-            except Exception as e:
-                logger.error(f"❌ Error procesando archivo BCRA USD: {e}")
-                logger.error(f"Archivo: {bcra_usd_file['processed_path']}")
+        # Merge con datos USD procesados desde Investing.com
+        if usd_quarterly.get("status") == "processed":
+            logger.info("💰 Mergeando con datos USD trimestrales desde Investing.com...")
+            
+            # Leer datos USD trimestrales simplificados
+            df_usd = pd.read_csv(usd_quarterly["simple_path"])
+            
+            logger.info(f"📊 Datos USD disponibles: {len(df_usd)} trimestres")
+            logger.info(f"📊 Índices USD: {sorted(df_usd['indice_tiempo'].unique())}")
+            logger.info(f"📊 Índices Turismo: {sorted(df_final['indice_tiempo'].unique())}")
+            
+            # Merge con datos USD
+            df_final = df_final.merge(df_usd, on="indice_tiempo", how="left")
+            
+            # Verificar merge
+            usd_matches = df_final['precio_promedio_usd'].notna().sum()
+            logger.info(f"✅ Merge USD completado: {usd_matches}/{len(df_final)} trimestres con datos USD")
+            
+            # Crear variables derivadas del USD
+            df_final['usd_alto'] = (df_final['precio_promedio_usd'] > df_final['precio_promedio_usd'].median()).astype(int)
+            df_final['usd_muy_volatil'] = (df_final['volatilidad_usd'] > 5).astype(int)
+            
         else:
-            logger.warning("⚠️ No se encontró archivo BCRA USD procesado")
-            logger.info("Archivos económicos disponibles:")
-            for f in economico_files:
-                logger.info(f"  - {f.get('original_file', 'unknown')}")
-
-        # Preparar dataset final
-        df_final = turistas_agg[["indice_tiempo", "turistas_no_residentes_total"]].copy()
-        
-        # Merge con datos USD
-        if not df_dolar_trimestral.empty:
-            logger.info(f"🔗 Realizando merge con datos USD")
-            df_final = df_final.merge(df_dolar_trimestral, on="indice_tiempo", how="left")
-            logger.info(f"✅ Merge USD completado. Datos finales:\n{df_final}")
-        else:
-            logger.warning("⚠️ No hay datos USD disponibles, agregando columna vacía")
+            logger.warning("⚠️ No hay datos USD procesados disponibles")
             df_final["precio_promedio_usd"] = None
+            df_final["volatilidad_usd"] = None
+            df_final["clasificacion_usd"] = "sin_datos"
 
-        # Eventos importantes por trimestre
-        eventos = {
-            "Q1": ["Fiesta Nacional de la Vendimia", "Vacaciones de Verano"],
-            "Q2": [],
-            "Q3": ["Vacaciones de Invierno", "Temporada de Esquí"],
-            "Q4": ["Fin de Año", "Primavera"]
-        }
-        def evento_importante(indice_tiempo):
+        # Agregar variables temporales y eventos
+        def extraer_año_trimestre(indice_tiempo):
             if isinstance(indice_tiempo, str) and "Q" in indice_tiempo:
-                q = indice_tiempo.split("Q")[-1]
-                return "; ".join(eventos.get(f"Q{q}", [])) if eventos.get(f"Q{q}", []) else "Sin evento"
-            return "Sin evento"
-        df_final["evento_importante"] = df_final["indice_tiempo"].apply(evento_importante)
+                año, q = indice_tiempo.split("Q")
+                return int(año), int(q)
+            return None, None
 
-        # Guardar CSV final
+        df_final[['año', 'trimestre']] = df_final['indice_tiempo'].apply(
+            lambda x: pd.Series(extraer_año_trimestre(x))
+        )
+
+        # Variables estacionales
+        df_final['es_verano'] = (df_final['trimestre'] == 1).astype(int)  # Q1: Ene-Mar
+        df_final['es_otoño'] = (df_final['trimestre'] == 2).astype(int)   # Q2: Abr-Jun
+        df_final['es_invierno'] = (df_final['trimestre'] == 3).astype(int) # Q3: Jul-Sep
+        df_final['es_primavera'] = (df_final['trimestre'] == 4).astype(int) # Q4: Oct-Dic
+
+        # Eventos importantes específicos de Mendoza
+        eventos = {
+            1: "Vendimia + Verano",  # Q1: Fiesta de la Vendimia + temporada alta verano
+            2: "Otoño tranquilo",    # Q2: Temporada media, cosecha
+            3: "Invierno + Esquí",   # Q3: Vacaciones de invierno, temporada de esquí
+            4: "Primavera + Fiestas" # Q4: Temporada media-alta, fiestas de fin de año
+        }
+        
+        df_final["evento_importante"] = df_final["trimestre"].map(eventos).fillna("Sin evento específico")
+        
+        # Variable de temporada turística
+        df_final['temporada_alta'] = df_final['trimestre'].isin([1, 3]).astype(int)  # Verano e Invierno
+        df_final['temporada_vendimia'] = (df_final['trimestre'] == 1).astype(int)
+        
+        # Crear variables lag para detectar tendencias
+        df_final = df_final.sort_values(['año', 'trimestre'])
+        df_final['turistas_lag1'] = df_final['turistas_no_residentes_total'].shift(1)
+        df_final['turistas_variacion'] = df_final['turistas_no_residentes_total'] - df_final['turistas_lag1']
+        df_final['turistas_crecimiento'] = (df_final['turistas_variacion'] / df_final['turistas_lag1'] * 100).round(2)
+
+        # Ordenar por indice_tiempo para presentación final
+        df_final = df_final.sort_values('indice_tiempo')
+
+        # Guardar archivo final
         local_data_dir = Path("/usr/local/airflow/data/raw")
         local_data_dir.mkdir(parents=True, exist_ok=True)
-        output_path = local_data_dir / "mendoza_turismo_final_filtrado.csv"
+        output_path = local_data_dir / "mendoza_turismo_final_con_usd.csv"
         df_final.to_csv(output_path, index=False, encoding="utf-8")
 
-        logger.info(f"✅ CSV final filtrado creado: {output_path} ({len(df_final)} filas)")
-        logger.info(f"Columnas: {list(df_final.columns)}")
-        logger.info(f"Dataset final:\n{df_final}")
+        # Crear resumen del dataset final
+        summary = {
+            "creation_timestamp": datetime.now().isoformat(),
+            "total_quarters": len(df_final),
+            "date_range": f"{df_final['indice_tiempo'].min()} - {df_final['indice_tiempo'].max()}",
+            "tourism_data_summary": {
+                "total_tourists_avg": round(df_final['turistas_no_residentes_total'].mean()),
+                "min_quarter": df_final.loc[df_final['turistas_no_residentes_total'].idxmin(), 'indice_tiempo'],
+                "max_quarter": df_final.loc[df_final['turistas_no_residentes_total'].idxmax(), 'indice_tiempo'],
+                "seasonal_pattern": "Q1 y Q3 típicamente más altos (Vendimia y Vacaciones de Invierno)"
+            },
+            "usd_data_summary": {
+                "has_usd_data": usd_quarterly.get("status") == "processed",
+                "avg_usd_price": round(df_final['precio_promedio_usd'].mean(), 2) if 'precio_promedio_usd' in df_final and df_final['precio_promedio_usd'].notna().any() else None,
+                "usd_quarters_coverage": f"{df_final['precio_promedio_usd'].notna().sum()}/{len(df_final)}" if 'precio_promedio_usd' in df_final else "0/0"
+            },
+            "features_available": list(df_final.columns),
+            "ready_for_modeling": True,
+            "recommended_target": "turistas_no_residentes_total",
+            "key_predictors": [
+                "precio_promedio_usd", "volatilidad_usd", "temporada_alta", 
+                "temporada_vendimia", "turistas_lag1", "año"
+            ]
+        }
+
+        summary_path = local_data_dir / "dataset_final_summary.json"
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        logger.info("=" * 70)
+        logger.info("📊 DATASET FINAL CREADO CON ÉXITO")
+        logger.info("=" * 70)
+        logger.info(f"📁 Archivo: {output_path}")
+        logger.info(f"📅 Trimestres: {len(df_final)}")
+        logger.info(f"🗓️ Rango: {summary['date_range']}")
+        logger.info(f"🎯 Variables: {len(df_final.columns)}")
+        logger.info(f"💰 Datos USD: {'SÍ' if summary['usd_data_summary']['has_usd_data'] else 'NO'}")
+        logger.info(f"📈 Promedio turistas: {summary['tourism_data_summary']['total_tourists_avg']:,}")
+        
+        if summary['usd_data_summary']['has_usd_data']:
+            logger.info(f"💵 Precio USD promedio: ${summary['usd_data_summary']['avg_usd_price']}")
+            logger.info(f"📊 Cobertura USD: {summary['usd_data_summary']['usd_quarters_coverage']}")
+        
+        logger.info("✅ LISTO PARA MODELADO PREDICTIVO")
+        logger.info("=" * 70)
+
         return str(output_path)
 
     except Exception as e:
-        logger.error(f"❌ Error creando dataset final filtrado: {e}")
+        logger.error(f"❌ Error creando dataset final con USD: {e}")
         import traceback
         logger.error(f"Traceback completo: {traceback.format_exc()}")
         return ""
-        
+
 # ─── DAG Definition Mejorado ───────────────────────────────────────────────────
 
 with DAG(
     dag_id="mza_turismo_etl_enhanced",
     default_args=default_args,
-    description="Pipeline ETL Mejorado - Predicción Demanda Hotelera Mendoza con Variables Económicas",
+    description="Pipeline ETL Mejorado - Predicción Demanda Hotelera Mendoza con USD desde Investing.com",
     schedule="@monthly",
     start_date=datetime(2024, 8, 1),
     catchup=False,
     max_active_runs=1,
     max_active_tasks=10,
-    tags=["mendoza", "turismo", "economia", "features", "enhanced", "v2"],
+    tags=["mendoza", "turismo", "economia", "usd", "investing", "enhanced", "v2.1"],
     doc_md="""
-    ## Pipeline ETL Mejorado - Demanda Hotelera Mendoza
+    ## Pipeline ETL Mejorado - Demanda Hotelera Mendoza v2.1
     
-    **Versión 2.0** - Incluye variables económicas, procesamiento avanzado y feature engineering
+    **NUEVA FUNCIONALIDAD**: Scraping de datos USD históricos desde Investing.com
     
-    ### Fuentes de datos expandidas:
-    - **Turismo**: YVERA, ETI (datos turísticos oficiales)
-    - **Economía**: BCRA (USD, inflación), INDEC (PIB, empleo)
-    - **Infraestructura**: Establecimientos hoteleros Mendoza
-    - **Temporal**: Variables estacionales y eventos
+    ### Mejoras en datos económicos:
+    - **USD Diario**: Datos desde 01/01/2018 hasta fecha actual (con buffer de 7 días)
+    - **Promedios Trimestrales**: Sincronizados perfectamente con índices de turismo
+    - **Variables derivadas**: Volatilidad, clasificación de períodos, variaciones
     
-    ### Procesamiento avanzado:
-    - Estandarización de fechas y formatos
-    - Filtrado geográfico inteligente (Mendoza)
-    - Agregación mensual automática
-    - Creación de matriz de features para ML
+    ### Fuentes de datos:
+    - **Turismo**: ETI Mendoza (aeropuerto + Cristo Redentor)
+    - **USD**: Investing.com (datos diarios históricos)
+    - **Variables temporales**: Estacionales, eventos, tendencias
     
-    ### Salidas para modelado:
-    - Dataset multidimensional procesado
-    - Matriz de features mensuales
-    - Variables económicas y estacionales
-    - Metadata y reportes de calidad
-    
-       
-    **Objetivo**: Base de datos robusta para modelo predictivo de demanda hotelera
+    ### Salida optimizada:
+    - Dataset final con USD sincronizado por trimestre
+    - Variables lag y de crecimiento
+    - Clasificación automática de períodos económicos
+    - Listo para modelos predictivos avanzados
     """,
 ) as dag:
     # 1. Preparación expandida
     dirs = create_enhanced_directories(ds="{{ ds }}")
 
-    # 2. Resolver URLs dinámicas primero
-    resolved_specs = []
-    static_specs = []
-    for spec in DOWNLOAD_SPECS:
-        if spec.get("type") == "dynamic_url":
-            resolved_task = resolve_dynamic_urls(spec=spec)
-            resolved_specs.append(resolved_task)
-        else:
-            static_specs.append(spec)
-
-    # 3. Descarga de datos por tipo
+    # 2. Descarga de datos tradicionales
     all_downloads = []
-    
-    # Procesar specs estáticas
     for spec in static_specs:
         tipo = spec.get("type", "")
         if tipo == "direct_csv":
@@ -1820,45 +1766,47 @@ with DAG(
         elif tipo == "api_json":
             api_task = download_api_json(spec=spec, directories=dirs)
             all_downloads.append(api_task)
-    
-    # Procesar specs dinámicas resueltas
-    for resolved_spec in resolved_specs:
-        # Aquí necesitarías lógica adicional para procesar las specs resueltas
-        pass
 
-    # 4. Procesamiento y estandarización
+    # 3. NUEVA TAREA: Scraping USD desde Investing.com
+    usd_historical = scrape_usd_historical_data(directories=dirs)
+    
+    # 4. NUEVA TAREA: Procesar USD a promedios trimestrales
+    usd_quarterly = process_usd_to_quarterly_averages(
+        usd_data=usd_historical,
+        directories=dirs
+    )
+
+    # 5. Procesamiento tradicional
     processing_result = process_and_standardize_data(
         all_downloads=all_downloads,
         directories=dirs
     )
 
-    # 5. Creación de matriz de features
+    # 6. Dataset final MEJORADO con USD sincronizado
+    final_dataset_with_usd = create_final_mendoza_dataset(
+        processing_summary=processing_result,
+        usd_quarterly=usd_quarterly,
+        directories=dirs
+    )
+
+    # 7. Resto de tareas existentes
     features_matrix = create_monthly_features_matrix(
         processing_summary=processing_result,
         directories=dirs
     )
 
-    # 6. Crear dataset unificado final (NUEVA TAREA)
     unified_dataset = create_unified_mendoza_dataset(
         all_downloads=all_downloads,
         processing_summary=processing_result,
         directories=dirs
     )
 
-    # 7. Crear dataset final específico para modelado (NUEVA TAREA)
-    final_dataset = create_final_mendoza_dataset(
-        processing_summary=processing_result,
-        directories=dirs
-    )
-
-    # 8. Validación mejorada
     enhanced_validation = validate_enhanced_data(
         all_downloads=all_downloads,
         processing_summary=processing_result,
         directories=dirs
     )
 
-    # 9. Reporte final mejorado
     final_enhanced_report = generate_enhanced_pipeline_report(
         validation_results=enhanced_validation,
         processing_summary=processing_result,
@@ -1866,5 +1814,11 @@ with DAG(
         directories=dirs
     )
 
-    # Dependencias del pipeline mejorado
-    dirs >> all_downloads >> processing_result >> [features_matrix, unified_dataset, final_dataset] >> enhanced_validation >> final_enhanced_report
+    # NUEVAS DEPENDENCIAS con USD
+    dirs >> [all_downloads, usd_historical]
+    usd_historical >> usd_quarterly
+    all_downloads >> processing_result
+    [processing_result, usd_quarterly] >> final_dataset_with_usd
+    processing_result >> [features_matrix, unified_dataset]
+    [all_downloads, processing_result] >> enhanced_validation
+    [enhanced_validation, processing_result, features_matrix] >> final_enhanced_report

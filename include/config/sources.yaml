@@ -1,4 +1,5 @@
-# Configuración actualizada para pipeline de demanda hotelera Mendoza v2.1
+# Configuración optimizada para pipeline de demanda hotelera Mendoza v2.2
+# Fuentes principales: ETI Mendoza + dolarapi.com
 
 # -------------------------------
 # Turismo (ETI - CSVs directos)  
@@ -8,48 +9,42 @@ eti_aeropuerto:
   api_url: "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/c112ca01-2563-4a48-a8d6-1126af9a5f1d/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_aeropuerto_mendoza_trimes.csv"
   type: "direct_csv"
   min_bytes: 2000
+  category: "turismo"
+  enabled: true
 
 eti_cristo_redentor:
   dataset_name: "eti_mendoza_cristo_redentor_turistas_no_residentes"
   api_url: "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/941a5faf-898d-47f5-b889-25e3919bc468/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_cristo_redentor_trimestra.csv"
   type: "direct_csv"
   min_bytes: 2000
+  category: "turismo"
+  enabled: true
 
 # -------------------------------
-# Variables económicas MEJORADAS
+# Variables económicas principales
 # -------------------------------
-# NUEVA FUENTE: USD desde Investing.com (datos históricos diarios)
-usd_investing:
-  dataset_name: "usd_ars_historico_investing"
-  base_url: "https://es.investing.com/currencies/usd-ars-historical-data"
-  type: "investing_scraping"
+usd_dolarapi:
+  dataset_name: "usd_ars_historico_dolarapi"
+  api_url: "https://dolarapi.com/v1/dolares/oficial"  # Base URL, fechas se agregan dinámicamente
+  type: "api_json_daily"  # Nuevo tipo para indicar descarga día por día
   min_bytes: 5000
   start_date: "2018-01-01"
-  buffer_days: 7  # No usar últimos 7 días (datos incompletos)
-  description: "Cotización USD-ARS histórica diaria desde Investing.com"
+  description: "Cotización USD-ARS histórica diaria desde dolarapi.com (día por día)"
   category: "economico"
-  scraping_config:
-    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    table_selectors: ["#curr_table", ".genTbl"]
-    fallback_enabled: true
-    timeout_seconds: 30
-
-# RESPALDO: BCRA como fuente secundaria (en caso de falla de Investing)
-bcra_usd_backup:
-  dataset_name: "cotizacion_usd_bcra_backup"
-  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=168.1_T_CAMBIOR_D_0_0_26&start_date=2018-01-01&limit=5000"
-  type: "api_json"
-  min_bytes: 1000
-  date_column: "index"
-  value_column: "value"
-  description: "Respaldo BCRA para cotización USD"
-  category: "economico"
-  enabled: false  # Solo usar si falla Investing
+  enabled: true
+  daily_download_config:
+    max_failures: 50  # Permitir fallos en fechas sin datos
+    rate_limit_seconds: 0.1  # Pausa entre requests
+    timeout_per_request: 30
+    retry_delay: 1  # Pausa adicional en caso de error
+  validation:
+    min_price: 10.0
+    max_price: 3000.0
+    expected_fields: ["fecha", "compra", "venta"]
 
 # -------------------------------
-# Datos adicionales económicos
+# Datos económicos complementarios (opcional)
 # -------------------------------
-# Inflación INDEC (opcional)
 indec_inflacion:
   dataset_name: "inflacion_mensual_indec"
   api_url: "https://apis.datos.gob.ar/series/api/series/?ids=148.3_IJNACIO_DICI_M_26&start_date=2018-01-01&limit=5000"
@@ -57,69 +52,10 @@ indec_inflacion:
   min_bytes: 1000
   description: "Índice de inflación mensual INDEC"
   category: "economico"
-  enabled: true
+  enabled: false  # Opcional - deshabilitado por defecto
 
 # -------------------------------
-# Eventos principales Mendoza (ACTUALIZADO)
-# -------------------------------
-eventos_mendoza:
-  dataset_name: "eventos_turisticos_mendoza"
-  manual_data: true
-  description: "Eventos turísticos relevantes Mendoza con impacto estacional"
-  category: "eventos"
-  eventos_principales:
-    - nombre: "Fiesta Nacional de la Vendimia"
-      mes: 3
-      trimestre: 1
-      impacto: "alto"
-      duracion_dias: 15
-      multiplicador_turismo: 1.3
-    - nombre: "Vacaciones de Verano"
-      mes: [1, 2]
-      trimestre: 1
-      impacto: "alto"
-      duracion_dias: 60
-      multiplicador_turismo: 1.2
-    - nombre: "Vacaciones de Invierno"
-      mes: 7
-      trimestre: 3
-      impacto: "alto"
-      duracion_dias: 15
-      multiplicador_turismo: 1.4
-    - nombre: "Temporada de Esquí"
-      mes: [7, 8]
-      trimestre: 3
-      impacto: "medio"
-      duracion_dias: 45
-      multiplicador_turismo: 1.1
-    - nombre: "Festival Internacional de Cine"
-      mes: 10
-      trimestre: 4
-      impacto: "medio"
-      duracion_dias: 7
-      multiplicador_turismo: 1.05
-    - nombre: "Fin de Año"
-      mes: 12
-      trimestre: 4
-      impacto: "alto"
-      duracion_dias: 10
-      multiplicador_turismo: 1.25
-
-# -------------------------------
-# Conectividad aérea (MEJORADO)
-# -------------------------------
-conectividad_aerea:
-  dataset_name: "vuelos_mendoza_eana"
-  dataset_url: "https://datos.gob.ar/dataset/transporte-operaciones-aeroportuarias"
-  description: "Operaciones aeroportuarias - Aeropuerto Mendoza"
-  type: "dataset_page_scraping"
-  min_bytes: 50000
-  category: "infraestructura"
-  dynamic_scraping: true
-  enabled: false  # Deshabilitado por complejidad - usar solo ETI
-
-# -------------------------------
-# Configuración del pipeline ACTUALIZADA
+# Configuración del pipeline
 # -------------------------------
 defaults:
   timeout_seconds: 180
@@ -127,65 +63,77 @@ defaults:
   max_retries: 3
   min_rows_per_table: 3
   enable_small_files: true
-  scraping_timeout: 30  # NUEVO: Timeout específico para scraping
-  usd_buffer_days: 7     # NUEVO: Días a excluir del final de datos USD
 
 validation:
   enable_data_quality_checks: true
   min_rows_per_table: 3
   allow_small_valid_files: true
   small_file_threshold: 5000
-  # NUEVO: Validaciones específicas para USD
+  
+  # Validaciones específicas por fuente
+  eti_validation:
+    required_columns: ["indice_tiempo", "turistas_no_residentes"]
+    min_records_per_quarter: 1
+    
   usd_validation:
-    min_price: 10.0      # USD mínimo válido
-    max_price: 2000.0    # USD máximo válido
+    min_price: 10.0
+    max_price: 3000.0
     max_daily_change: 50  # Máximo cambio diario %
     require_recent_data: true
-  
-# -------------------------------
-# Configuraciones de scraping NUEVAS
-# -------------------------------
-scraping_config:
-  default_headers:
-    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
-    Accept-Language: "es-ES,es;q=0.9,en;q=0.8"
-    Accept-Encoding: "gzip, deflate, br"
-    Connection: "keep-alive"
-  
-  investing_com:
-    table_selectors: ["#curr_table", ".genTbl", "[data-test='historical-data-table']"]
-    date_format: "%d/%m/%Y"
-    retry_attempts: 3
-    fallback_enabled: true
-    fallback_estimation: true  # Generar datos estimados si falla todo
 
 # -------------------------------
-# Agregación y features NUEVAS
+# Configuración de logs y debugging
+# -------------------------------
+logging_config:
+  enable_detailed_logs: true
+  log_data_samples: true
+  max_sample_rows: 5
+  
+  # Métricas a trackear
+  track_metrics:
+    - "download_success_rate"
+    - "data_quality_score"
+    - "usd_data_coverage"
+    - "tourism_data_completeness"
+
+# -------------------------------
+# Agregación y procesamiento (consolidado)
 # -------------------------------
 aggregation:
-  target_frequency: "quarterly"  # Cambio de monthly a quarterly
+  target_frequency: "quarterly"
+  
   usd_aggregation:
     methods: ["mean", "min", "max", "std"]
     calculate_volatility: true
     classify_periods: true
+    volatility_threshold: 5.0  # % para considerar alta volatilidad
   
   tourism_aggregation:
     methods: ["sum", "mean"]
     calculate_growth: true
     seasonal_adjustment: true
+    lag_periods: [1, 4]  # 1 y 4 trimestres atrás
 
 feature_engineering:
-  lag_periods: [1, 4]  # 1 y 4 trimestres atrás
   seasonal_variables: true
+  lag_periods: [1, 4]  # 1 y 4 trimestres atrás
+  
+  # Términos de interacción
   interaction_terms:
     - ["precio_promedio_usd", "temporada_alta"]
     - ["volatilidad_usd", "evento_importante"]
   
+  # Variables derivadas automáticas
   derived_variables:
     usd_categories: ["bajo", "medio", "alto", "muy_alto"]
     tourism_categories: ["muy_bajo", "bajo", "medio", "alto", "muy_alto"]
     volatility_threshold: 5.0  # % para considerar alta volatilidad
+  
+  # Variables de eventos específicas de Mendoza
+  mendoza_events:
+    vendimia_quarter: 1  # Q1 (Marzo)
+    winter_vacation_quarter: 3  # Q3 (Julio)
+    high_season_quarters: [1, 3]  # Verano e Invierno
 
 # -------------------------------
 # URLs dinámicas (mantenidas para futuro)
@@ -201,6 +149,43 @@ indec_turismo_dinamico:
   enabled: false  # Deshabilitado por ahora
 
 # -------------------------------
+# Configuración de salida (unificada)
+# -------------------------------
+output_config:
+  final_dataset_name: "mendoza_turismo_final_con_usd.csv"
+  summary_report: true
+  feature_matrix: true
+  quarterly_aggregation: true
+  
+  # Orden de columnas en dataset final (versión definitiva)
+  columns_order:
+    - "indice_tiempo"
+    - "año"
+    - "trimestre"
+    - "turistas_no_residentes_total"
+    - "turistas_aeropuerto"
+    - "turistas_cristo"
+    - "precio_promedio_usd"
+    - "volatilidad_usd"
+    - "precio_min_usd"
+    - "precio_max_usd"
+    - "temporada_alta"
+    - "temporada_vendimia"
+    - "evento_importante"
+    - "turistas_lag1"
+    - "turistas_crecimiento"
+    - "usd_alto"
+    - "usd_muy_volatil"
+    - "es_verano"
+    - "es_invierno"
+  search_pattern: "turismo.*\\.csv$"
+  type: "dynamic_url"
+  fallback_type: "direct_csv"
+  min_bytes: 5000
+  description: "Datos turísticos INDEC con URL dinámica"
+  enabled: false  # Deshabilitado por ahora
+
+# -------------------------------
 # Configuración de salida NUEVA
 # -------------------------------
 output_config:
@@ -208,6 +193,21 @@ output_config:
   summary_report: true
   feature_matrix: true
   quarterly_aggregation: true
+  
+  columns_order:
+    - "indice_tiempo"
+    - "año"
+    - "trimestre"
+    - "turistas_no_residentes_total"
+    - "turistas_aeropuerto"
+    - "turistas_cristo"
+    - "precio_promedio_usd"
+    - "volatilidad_usd"
+    - "clasificacion_usd"
+    - "temporada_alta"
+    - "temporada_vendimia"
+    - "evento_importante"
+    - "turistas_crecimiento"
   
   columns_order:
     - "indice_tiempo"

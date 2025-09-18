@@ -18,14 +18,6 @@ from airflow.models import Variable
 from airflow.operators.python import get_current_context
 from airflow.exceptions import AirflowException
 
-# Import condicional para BeautifulSoup
-try:
-    from bs4 import BeautifulSoup
-    BS4_AVAILABLE = True
-except ImportError:
-    BS4_AVAILABLE = False
-    logging.warning("BeautifulSoup4 no disponible - funcionalidad de scraping deshabilitada")
-
 # ─── Configuración ─────────────────────────────────────────────────────────────
 
 AIRFLOW_HOME = Path("/usr/local/airflow")
@@ -70,21 +62,6 @@ def build_enhanced_download_specs(cfg: dict) -> List[Dict[str, Any]]:
     defaults = cfg.get("defaults", {})
     
     # 1. Fuentes turísticas originales
-    open_data_config = cfg.get("open_data_mza", {})
-    if open_data_config:
-        api_url = open_data_config.get("api_url")
-        if api_url:
-            specs.append({
-                "src": "open_data_mza",
-                "name": f"{open_data_config.get('dataset_name', 'turismo-data')}.csv",
-                "url": api_url,
-                "type": "direct_csv",
-                "min_bytes": open_data_config.get("min_bytes", 5000),
-                "description": "Turismo Internacional - Total País (YVERA)",
-                "category": "turismo"
-            })
-            logger.info("✅ Open Data Mendoza spec configurado")
-    
     # ETI aeropuerto
     eti_aeropuerto_config = cfg.get("eti_aeropuerto", {})
     if eti_aeropuerto_config:
@@ -117,71 +94,20 @@ def build_enhanced_download_specs(cfg: dict) -> List[Dict[str, Any]]:
             })
             logger.info("✅ ETI Cristo Redentor spec configurado")
     
-    # 2. Variables económicas - BCRA
-    bcra_usd_config = cfg.get("bcra_usd", {})
-    if bcra_usd_config:
-        api_url = bcra_usd_config.get("api_url")
-        if api_url:
-            specs.append({
-                "src": "bcra",
-                "name": "cotizacion_usd_historica.json",
-                "url": api_url,
-                "type": "api_json",
-                "min_bytes": bcra_usd_config.get("min_bytes", 1000),
-                "description": "Cotización USD oficial BCRA",
-                "category": "economico",
-                "headers": bcra_usd_config.get("headers", {})
-            })
-            logger.info("✅ BCRA USD spec configurado")
-    
-    bcra_inflation_config = cfg.get("bcra_inflation", {})
-    if bcra_inflation_config:
-        api_url = bcra_inflation_config.get("api_url")
-        if api_url:
-            specs.append({
-                "src": "bcra",
-                "name": "inflacion_mensual.json", 
-                "url": api_url,
-                "type": "api_json",
-                "min_bytes": bcra_inflation_config.get("min_bytes", 1000),
-                "description": "Inflación mensual BCRA",
-                "category": "economico",
-                "headers": bcra_inflation_config.get("headers", {})
-            })
-            logger.info("✅ BCRA Inflación spec configurado")
-    
-    # 3. Datos INDEC adicionales
-    indec_pib_config = cfg.get("indec_pib", {})
-    if indec_pib_config:
-        api_url = indec_pib_config.get("api_url")
-        if api_url:
-            specs.append({
-                "src": "indec",
-                "name": "pib_mensual.json",
-                "url": api_url, 
-                "type": "api_json",
-                "min_bytes": indec_pib_config.get("min_bytes", 2000),
-                "description": "PIB mensual Argentina",
-                "category": "economico"
-            })
-            logger.info("✅ INDEC PIB spec configurado")
-    
-    # 4. Alojamiento específico Mendoza
-    alojamiento_config = cfg.get("alojamiento_mendoza", {})
-    if alojamiento_config:
-        api_url = alojamiento_config.get("api_url")
-        if api_url:
-            specs.append({
-                "src": "alojamiento",
-                "name": "establecimientos_mendoza.csv",
-                "url": api_url,
-                "type": "direct_csv", 
-                "min_bytes": alojamiento_config.get("min_bytes", 10000),
-                "description": "Establecimientos alojamiento Mendoza",
-                "category": "infraestructura",
-                "filter_province": alojamiento_config.get("filter_province", "Mendoza")
-            })
-            logger.info("✅ Alojamiento Mendoza spec configurado")
+    # 2. USD desde argentinadatos.com
+    usd_dolarapi_config = cfg.get("usd_dolarapi", {})
+    if usd_dolarapi_config and usd_dolarapi_config.get("enabled", True):
+        specs.append({
+            "src": "dolarapi",
+            "name": "usd_historico_dolarapi.json",
+            "url": usd_dolarapi_config.get("api_url"),
+            "type": "api_json",
+            "min_bytes": usd_dolarapi_config.get("min_bytes", 5000),
+            "description": "Cotización USD histórica desde argentinadatos.com",
+            "category": "economico",
+            "params": usd_dolarapi_config.get("params", {})
+        })
+        logger.info("✅ DolarAPI USD spec configurado")
     
     logger.info(f"📋 Total especificaciones generadas: {len(specs)}")
     return specs
@@ -596,7 +522,6 @@ def process_and_standardize_data(
             else:
                 files.append(download)
         
-        # DEBUG: Mostrar todos los archivos descargados
         logger.info(f"📥 Total archivos descargados: {len(files)}")
         for file_info in files:
             logger.info(f"  📄 {file_info.get('name', 'unknown')}: {file_info.get('status', 'unknown')} - {file_info.get('category', 'unknown')}")
@@ -611,7 +536,6 @@ def process_and_standardize_data(
         processed_dir = Path(directories["processed"])
         
         for file_info in files:
-            # Incluir archivos pequeños pero válidos - MEJORAR LA CONDICIÓN
             status = file_info.get("status", "")
             if not (status.startswith("downloaded") or status == "cached"):
                 logger.warning(f"⚠️ Saltando archivo con status: {status} - {file_info.get('name', 'unknown')}")
@@ -626,12 +550,11 @@ def process_and_standardize_data(
                 if path.endswith(".csv"):
                     df = pd.read_csv(path, encoding='utf-8')
                     
-                    # Log adicional para archivos ETI pequeños
+                    # Procesar archivos ETI
                     if "eti" in file_info.get("name", "").lower():
                         logger.info(f"📊 Procesando ETI {file_info['name']}: {len(df)} filas, columnas: {list(df.columns)}")
-                        logger.info(f"📊 Primeras 5 filas del archivo original:\n{df.head()}")
                         
-                        # PROCESAR ETI CORRECTAMENTE - Buscar columna de fecha
+                        # Buscar columna de fecha
                         fecha_col = None
                         for col in df.columns:
                             if col.lower() in ['fecha', 'periodo', 'period', 'anio_trimestre', 'trimestre']:
@@ -640,169 +563,48 @@ def process_and_standardize_data(
                         
                         if fecha_col:
                             logger.info(f"✅ ETI {file_info['name']} - Columna de fecha encontrada: {fecha_col}")
-                            logger.info(f"📅 Valores únicos en {fecha_col}: {df[fecha_col].unique()}")
-                            
-                            # Convertir a datetime y crear indice_tiempo
                             try:
                                 df[fecha_col] = pd.to_datetime(df[fecha_col], errors='coerce')
                                 df['indice_tiempo'] = df[fecha_col]
-                                df['fecha_std'] = df[fecha_col]  # IMPORTANTE: Crear fecha_std
+                                df['fecha_std'] = df[fecha_col]
                                 logger.info(f"✅ ETI {file_info['name']} - fecha_std creada exitosamente")
                             except Exception as e:
                                 logger.error(f"❌ ETI {file_info['name']} - Error creando fecha_std: {e}")
-                        else:
-                            logger.warning(f"⚠️ ETI {file_info['name']} - No se encontró columna de fecha")
-                            # Si no hay columna de fecha, intentar usar indice_tiempo si existe
-                            if 'indice_tiempo' in df.columns:
-                                try:
-                                    df['fecha_std'] = pd.to_datetime(df['indice_tiempo'], errors='coerce')
-                                    logger.info(f"✅ ETI {file_info['name']} - fecha_std creada desde indice_tiempo")
-                                except Exception as e:
-                                    logger.error(f"❌ Error usando indice_tiempo como fecha_std: {e}")
-                            # Si no hay indice_tiempo, intentar usar fecha_std si ya existe
-                            elif 'fecha_std' in df.columns:
-                                try:
-                                    df['fecha_std'] = pd.to_datetime(df['fecha_std'], errors='coerce')
-                                    logger.info(f"✅ ETI {file_info['name']} - fecha_std ya estaba presente")
-                                except Exception as e:
-                                    logger.error(f"❌ Error convirtiendo fecha_std existente: {e}")
                         
                 elif path.endswith(".json"):
                     with open(path, 'r', encoding='utf-8') as f:
                         json_data = json.load(f)
                     
-                    # Validación mejorada para diferentes formatos de API
-                    if file_info.get("src") == "bcra":
-                        logger.info(f"🏦 Procesando datos BCRA: {file_info['name']}")
-                        logger.info(f"🔍 Estructura JSON BCRA: {list(json_data.keys()) if isinstance(json_data, dict) else type(json_data)}")
+                    # Procesar datos de argentinadatos.com (USD)
+                    if file_info.get("src") == "dolarapi" or "argentinadatos" in file_info.get("name", ""):
+                        logger.info(f"💰 Procesando datos USD desde argentinadatos.com: {file_info['name']}")
                         
-                        # BCRA API formato: {"results": [{"index":..., "value":...}, ...]}
-                        if isinstance(json_data, dict) and "results" in json_data:
-                            results = json_data["results"]
-                            logger.info(f"📊 BCRA raw results: {len(results)} elementos")
-                            
-                            # Validación robusta: filtrar elementos válidos
-                            valid_items = []
-                            for i, item in enumerate(results):
-                                if isinstance(item, dict) and "index" in item and "value" in item:
-                                    # Verificar que los valores no sean None/null
-                                    if item["index"] is not None and item["value"] is not None:
-                                        # Verificar que value sea numérico
-                                        try:
-                                            float(item["value"])
-                                            valid_items.append(item)
-                                        except (ValueError, TypeError):
-                                            logger.warning(f"BCRA item {i}: valor no numérico: {item.get('value')}")
-                                    else:
-                                        logger.warning(f"BCRA item {i}: index o value es None")
-                                else:
-                                    logger.warning(f"BCRA item {i}: formato inválido: {item}")
-                            
-                            if len(valid_items) == 0:
-                                logger.error(f"No se encontraron elementos válidos en {file_info['name']}")
-                                continue
-                            
-                            logger.info(f"✅ BCRA elementos válidos: {len(valid_items)}/{len(results)}")
-                            
-                            # Crear DataFrame solo con elementos válidos
-                            try:
-                                dates = [item["index"] for item in valid_items]
-                                values = [float(item["value"]) for item in valid_items]
-                                
-                                # Verificación adicional de longitudes
-                                if len(dates) != len(values):
-                                    logger.error(f"Longitudes diferentes: dates={len(dates)}, values={len(values)}")
-                                    # Tomar el mínimo para evitar error
-                                    min_len = min(len(dates), len(values))
-                                    dates = dates[:min_len]
-                                    values = values[:min_len]
-                                    logger.warning(f"Ajustado a longitud mínima: {min_len}")
-                                
-                                df = pd.DataFrame({"fecha": dates, "valor": values})
-                                
-                                # IMPORTANTE: Crear fecha_std para BCRA
-                                df['fecha_std'] = pd.to_datetime(df['fecha'], errors='coerce')
-                                logger.info(f"✅ BCRA DataFrame creado: {len(df)} registros válidos con fecha_std")
-                                
-                            except Exception as e:
-                                logger.error(f"Error creando DataFrame BCRA: {e}")
-                                continue
-                        else:
-                            # PROCESAR FORMATO NO ESTÁNDAR DE BCRA
-                            logger.warning(f"BCRA formato no estándar en {file_info['name']}")
-                            logger.info(f"🔍 Contenido completo del JSON: {json_data}")
-                            
-                            # Intentar extraer datos del formato actual
-                            if isinstance(json_data, dict):
-                                # Si es dict con 'data', extraer eso
-                                if 'data' in json_data and isinstance(json_data['data'], list):
-                                    data_list = json_data['data']
-                                    if len(data_list) > 0 and isinstance(data_list[0], list) and len(data_list[0]) >= 2:
-                                        # Formato [[fecha, valor], [fecha, valor], ...]
-                                        dates = [item[0] for item in data_list]
-                                        values = [float(item[1]) for item in data_list]
-                                        df = pd.DataFrame({"fecha": dates, "valor": values})
-                                        df['fecha_std'] = pd.to_datetime(df['fecha'], errors='coerce')
-                                        logger.info(f"✅ BCRA formato data extraído: {len(df)} registros")
-                                    else:
-                                        logger.error(f"Formato data BCRA no reconocido: {data_list[:3] if data_list else 'vacío'}")
-                                        continue
-                                else:
-                                    # Formato directo como dict
-                                    df = pd.DataFrame([json_data])
-                                    logger.warning(f"BCRA procesado como dict simple: {len(df)} registros")
-                            else:
-                                logger.error(f"Formato JSON BCRA no reconocido: {type(json_data)}")
-                                continue
-                    elif file_info.get("src") == "indec":
-                        logger.info(f"📈 Procesando datos INDEC: {file_info['name']}")
-                        
-                        # INDEC API formato: {"data": [{...}]} o directo
-                        if isinstance(json_data, dict) and "data" in json_data:
-                            if isinstance(json_data["data"], list):
-                                df = pd.DataFrame(json_data["data"])
-                            else:
-                                df = pd.DataFrame([json_data["data"]])
-                        elif isinstance(json_data, list):
+                        if isinstance(json_data, list) and len(json_data) > 0:
                             df = pd.DataFrame(json_data)
-                        elif isinstance(json_data, dict):
-                            df = pd.DataFrame([json_data])
-                        else:
-                            logger.error(f"Formato JSON INDEC no reconocido: {type(json_data)}")
-                            continue
-                    else:
-                        # Formato genérico para otras fuentes
-                        logger.info(f"📄 Procesando JSON genérico: {file_info['name']}")
-                        
-                        if isinstance(json_data, list):
-                            if len(json_data) > 0:
-                                df = pd.DataFrame(json_data)
-                            else:
-                                logger.warning(f"Lista JSON vacía en {file_info['name']}")
-                                continue
-                        elif isinstance(json_data, dict):
-                            df = pd.DataFrame([json_data])
-                        else:
-                            logger.warning(f"Formato JSON no reconocido en {file_info['name']}: {type(json_data)}")
-                            continue
-                        
-                        # Intentar crear fecha_std para otros JSONs
-                        date_columns = ['fecha', 'date', 'periodo', 'period', 'index']
-                        for col in df.columns:
-                            if isinstance(col, str) and col.lower() in date_columns:
-                                try:
-                                    df['fecha_std'] = pd.to_datetime(df[col], errors='coerce')
-                                    logger.info(f"✅ fecha_std creada desde {col}")
+                            
+                            # Identificar columna de fecha de manera flexible
+                            fecha_col = None
+                            for col in df.columns:
+                                if col.lower() in ['fecha', 'date', 'time', 'timestamp']:
+                                    fecha_col = col
                                     break
-                                except Exception as e:
-                                    logger.warning(f"Error convirtiendo {col} a fecha_std: {e}")
+                            
+                            if fecha_col:
+                                df['fecha_std'] = pd.to_datetime(df[fecha_col], errors='coerce')
+                                logger.info(f"✅ USD DataFrame creado: {len(df)} registros válidos con fecha_std desde '{fecha_col}'")
+                            else:
+                                logger.error(f"❌ No se encontró columna de fecha. Columnas: {list(df.columns)}")
+                                continue
+                        else:
+                            logger.error("❌ Formato JSON USD no válido")
+                            continue
 
                 # Verificar que el DataFrame no esté vacío
                 if df.empty:
                     logger.warning(f"DataFrame vacío generado para {file_info['name']}")
                     continue
                 
-                # Filtrar datos desde 2018 en adelante para uniformidad
+                # Filtrar datos desde 2018 en adelante
                 if 'fecha_std' in df.columns:
                     original_rows = len(df)
                     valid_dates = df['fecha_std'].notna().sum()
@@ -814,38 +616,10 @@ def process_and_standardize_data(
                         if original_rows != filtered_rows:
                             logger.info(f"📅 Filtro 2018+: {original_rows} -> {filtered_rows} registros en {file_info['name']}")
                 
-                # NO FILTRAR POR MENDOZA EN ARCHIVOS ETI - Ya son específicos de Mendoza
-                if category in ["turismo"] and not "eti" in file_info.get("name", "").lower():
-                    mendoza_keywords = ["mendoza", "mza", "cuyo", "50"]  # Código INDEC Mendoza
-                    mendoza_mask = pd.Series([False] * len(df))
-                    
-                    for col in df.columns:
-                        if isinstance(col, str) and df[col].dtype == object:
-                            try:
-                                mendoza_mask = mendoza_mask | df[col].astype(str).str.contains(
-                                    "|".join(mendoza_keywords), case=False, na=False
-                                )
-                            except Exception as e:
-                                logger.warning(f"Error aplicando filtro Mendoza en columna {col}: {e}")
-                    
-                    if mendoza_mask.any():
-                        original_len = len(df)
-                        df = df[mendoza_mask]
-                        logger.info(f"🗺️ Filtrado Mendoza aplicado a {file_info['name']}: {original_len} -> {len(df)} registros")
-                elif "eti" in file_info.get("name", "").lower():
-                    logger.info(f"🗺️ ETI {file_info['name']} - Saltando filtro Mendoza (ya es específico de Mendoza)")
-                
-                # Verificar que aún tengamos datos después de todos los filtros
+                # Verificar que aún tengamos datos después de filtros
                 if df.empty:
                     logger.warning(f"DataFrame vacío después de filtros para {file_info['name']}")
                     continue
-                
-                # DEBUG FINAL para archivos procesados
-                logger.info(f"🔍 {file_info['name']} FINAL: {len(df)} filas, columnas: {list(df.columns)}")
-                logger.info(f"🔍 {file_info['name']} - tiene fecha_std: {'fecha_std' in df.columns}")
-                if 'fecha_std' in df.columns:
-                    valid_dates = df['fecha_std'].notna().sum()
-                    logger.info(f"🔍 {file_info['name']} - fechas válidas: {valid_dates}/{len(df)}")
                 
                 # Guardar archivo procesado
                 output_path = processed_dir / category / f"processed_{file_info['name'].replace('.json', '.csv')}"
@@ -866,20 +640,7 @@ def process_and_standardize_data(
                 
             except Exception as e:
                 logger.error(f"❌ Error procesando {file_info['name']}: {e}")
-                # Log adicional para debugging
-                logger.error(f"   Archivo: {path}")
-                logger.error(f"   Categoría: {category}")
-                logger.error(f"   Fuente: {file_info.get("src", "unknown")}")
-                import traceback
-                logger.error(f"   Traceback: {traceback.format_exc()}")
                 continue
-        
-        # Log de resumen final
-        logger.info("📊 RESUMEN DE PROCESAMIENTO:")
-        for category, files in processed_files.items():
-            logger.info(f"  📁 {category}: {len(files)} archivos procesados")
-            for file_info in files:
-                logger.info(f"    - {file_info['original_file']}: {file_info['rows']} filas, fecha_std: {file_info['has_date_column']}")
         
         # Resumen de procesamiento
         summary = {
@@ -901,8 +662,6 @@ def process_and_standardize_data(
         
     except Exception as e:
         logger.error(f"❌ Error en procesamiento de datos: {e}")
-        import traceback
-        logger.error(f"Traceback completo: {traceback.format_exc()}")
         return {"error": str(e), "success": False}
 
 @task
@@ -1314,7 +1073,7 @@ def generate_enhanced_pipeline_report(
                 "total_processed_files": processing_summary.get("total_processed", 0) if processing_summary.get("success", True) else 0,
                 "quality_issues": len(validation_results.get("data_quality_issues", [])),
                 "critical_data_available": {
-                    "tourism": validation_results.get("model_readiness", {}).get("has_tourism_data", False),
+                    "turismo": validation_results.get("model_readiness", {}).get("has_tourism_data", False),
                     "economic": validation_results.get("model_readiness", {}).get("has_economic_data", False)
                 }
             },
@@ -1431,113 +1190,186 @@ def resolve_dynamic_urls(spec: Dict[str, Any]) -> Dict[str, Any]:
         return spec
 
 @task
-def create_unified_mendoza_dataset(
-    all_downloads: List[Any],
-    processing_summary: Dict[str, Any],
-    directories: Dict[str, str]
-) -> str:
-    """Crea dataset final unificado de Mendoza y lo guarda localmente."""
+def download_usd_historical_dolarapi(directories: dict) -> dict:
+    """
+    Descarga datos históricos del dólar oficial desde 
+    https://api.argentinadatos.com/v1/dolar/historico
+    desde el 01-01-2018 hasta la fecha actual.
+    """
     try:
-        logger.info("🏗️ Creando dataset unificado de Mendoza...")
-        
-        # Recopilar todos los archivos procesados
-        processed_files = processing_summary.get("processed_files", {})
-        all_mendoza_data = []
-        
-        for category, files in processed_files.items():
-            for file_info in files:
-                try:
-                    df = pd.read_csv(file_info["processed_path"])
-                    
-                    # Agregar metadatos
-                    df['categoria'] = category
-                    df['fuente'] = file_info['original_file']
-                    df['fecha_procesamiento'] = datetime.now().isoformat()
-                    
-                    # Solo incluir si tiene datos relevantes
-                    if not df.empty and len(df) > 5:
-                        all_mendoza_data.append(df)
-                        logger.info(f"✅ Incluido {file_info['original_file']}: {len(df)} registros")
-                    
-                except Exception as e:
-                    logger.warning(f"Error leyendo {file_info['processed_path']}: {e}")
-                    continue
-        
-        if not all_mendoza_data:
-            logger.error("No se encontraron datos para unificar")
-            return ""
-        
-        # Unificar todos los datasets
-        df_unified = pd.concat(all_mendoza_data, ignore_index=True, sort=False)
-        
-        # Limpiar y estandarizar
-        df_unified = df_unified.drop_duplicates()
-        
-        # Convertir fecha_std a datetime si existe
-        if 'fecha_std' in df_unified.columns:
-            try:
-                # Intentar convertir a datetime, reemplazar valores inválidos con NaT
-                df_unified['fecha_std'] = pd.to_datetime(df_unified['fecha_std'], errors='coerce')
-                
-                # Eliminar filas con fechas inválidas
-                invalid_dates = df_unified['fecha_std'].isna().sum()
-                if invalid_dates > 0:
-                    logger.warning(f"Eliminando {invalid_dates} registros con fechas inválidas")
-                    df_unified = df_unified.dropna(subset=['fecha_std'])
-                
-                # Ordenar por fecha
-                df_unified = df_unified.sort_values('fecha_std')
-                logger.info(f"Dataset ordenado por fecha: {len(df_unified)} registros válidos")
-            except Exception as e:
-                logger.warning(f"Error procesando fechas: {e}. Continuando sin ordenar por fecha.")
-        else:
-            logger.info("No se encontró columna fecha_std para ordenar")
-        
-        # Guardar en volumen local montado
-        local_data_dir = Path("/usr/local/airflow/data/raw")
-        local_data_dir.mkdir(parents=True, exist_ok=True)
-        
-        output_path = local_data_dir / "mendoza_turismo_dataset_unificado.csv"
-        df_unified.to_csv(output_path, index=False, encoding='utf-8')
-        
-        # También guardar en curated para el pipeline
-        curated_path = Path(directories["curated"]) / "mendoza_dataset_final.csv"
-        df_unified.to_csv(curated_path, index=False, encoding='utf-8')
-        
-        # Crear resumen del dataset
-        dataset_summary = {
-            "creation_timestamp": datetime.now().isoformat(),
-            "total_records": len(df_unified),
-            "total_columns": len(df_unified.columns),
-            "date_range": f"{df_unified['fecha_std'].min()} - {df_unified['fecha_std'].max()}" if 'fecha_std' in df_unified.columns and not df_unified['fecha_std'].isna().all() else "N/A",
-            "categories_included": df_unified['categoria'].unique().tolist(),
-            "sources_included": df_unified['fuente'].unique().tolist(),
-            "local_path": str(output_path),
-            "pipeline_path": str(curated_path),
-            "column_list": df_unified.columns.tolist(),
-            "data_types": df_unified.dtypes.astype(str).to_dict(),
-            "missing_data_summary": df_unified.isnull().sum().to_dict()
+        # Configurar parámetros
+        url = "https://api.argentinadatos.com/v1/dolar/historico"
+        params = {
+            "tipo": "oficial",  # Dólar oficial
+            "desde": "2018-01-01",
+            "hasta": datetime.now().strftime("%Y-%m-%d")
         }
         
-        summary_path = local_data_dir / "dataset_summary.json"
-        with open(summary_path, 'w', encoding='utf-8') as f:
-            json.dump(dataset_summary, f, indent=2, ensure_ascii=False)
+        headers = {
+            "User-Agent": "TurismoDataPipeline/2.0",
+            "Accept": "application/json"
+        }
         
-        logger.info("=" * 60)
-        logger.info("📊 DATASET UNIFICADO CREADO EXITOSAMENTE")
-        logger.info("=" * 60)
-        logger.info(f"Registros totales: {len(df_unified):,}")
-        logger.info(f"Columnas: {len(df_unified.columns)}")
-        logger.info(f"Categorías: {', '.join(df_unified['categoria'].unique())}")
-        logger.info(f"Archivo local: {output_path}")
-        logger.info(f"Resumen: {summary_path}")
-        logger.info("=" * 60)
+        logger.info(f"🔄 Descargando USD oficial desde {params['desde']} hasta {params['hasta']}")
+        logger.info(f"🔗 URL: {url}")
         
-        return str(output_path)
+        response = requests.get(url, params=params, headers=headers, timeout=120)
+        response.raise_for_status()
         
+        data = response.json()
+        
+        if not isinstance(data, list):
+            logger.error(f"❌ Formato de respuesta inesperado: {type(data)}")
+            return {"status": "error", "error": "Formato de respuesta inesperado"}
+        
+        if len(data) == 0:
+            logger.error("❌ No se recibieron datos USD")
+            return {"status": "error", "error": "No se recibieron datos"}
+        
+        # Validar estructura de datos
+        sample_record = data[0]
+        logger.info(f"📋 Estructura de datos de muestra: {list(sample_record.keys())}")
+        
+        # Guardar datos raw
+        raw_dir = Path(directories["raw"]) / "economico"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = raw_dir / "usd_historico_argentinadatos.json"
+        
+        with open(dest_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        # Análisis de datos recibidos
+        dates = [record.get('fecha') for record in data if record.get('fecha')]
+        date_range = f"{min(dates)} - {max(dates)}" if dates else "N/A"
+        
+        logger.info(f"✅ Datos USD descargados desde argentinadatos.com: {len(data)} registros")
+        logger.info(f"📊 Rango de fechas: {date_range}")
+        logger.info(f"📋 Campos en cada registro: {list(sample_record.keys())}")
+        
+        return {
+            "status": "downloaded",
+            "path": str(dest_path),
+            "records": len(data),
+            "data": data,
+            "date_range": date_range,
+            "api_source": "argentinadatos.com"
+        }
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Error de conexión con argentinadatos.com: {e}")
+        return {"status": "error", "error": f"Error de conexión: {str(e)}"}
+    
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Error decodificando JSON: {e}")
+        return {"status": "error", "error": f"Error JSON: {str(e)}"}
+    
     except Exception as e:
-        logger.error(f"❌ Error creando dataset unificado: {e}")
-        return ""
+        logger.error(f"❌ Error descargando USD desde argentinadatos.com: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {"status": "error", "error": str(e)}
+
+@task
+def process_usd_to_quarterly_averages(
+    usd_data: dict,
+    directories: dict
+) -> dict:
+    """
+    Procesa los datos históricos del dólar para obtener promedios trimestrales y variables derivadas.
+    Adaptado para argentinadatos.com API.
+    """
+    try:
+        if usd_data.get("status") != "downloaded":
+            logger.error("No se puede procesar datos USD: descarga fallida")
+            return {"status": "error"}
+        
+        data = usd_data["data"]
+        df = pd.DataFrame(data)
+        
+        logger.info(f"📊 Procesando {len(df)} registros de USD desde {usd_data.get('api_source', 'API')}")
+        logger.info(f"📋 Columnas disponibles: {list(df.columns)}")
+        
+        # Identificar columnas de fecha y precio de venta
+        fecha_col = None
+        venta_col = None
+        
+        # Buscar columna de fecha
+        for col in df.columns:
+            if col.lower() in ['fecha', 'date', 'time', 'timestamp']:
+                fecha_col = col
+                break
+        
+        # Buscar columna de precio de venta
+        for col in df.columns:
+            if col.lower() in ['venta', 'sell', 'precio_venta', 'valor']:
+                venta_col = col
+                break
+        
+        if not fecha_col:
+            logger.error(f"❌ No se encontró columna de fecha. Columnas: {list(df.columns)}")
+            return {"status": "error", "error": "Columna de fecha no encontrada"}
+        
+        if not venta_col:
+            logger.error(f"❌ No se encontró columna de venta. Columnas: {list(df.columns)}")
+            return {"status": "error", "error": "Columna de venta no encontrada"}
+        
+        logger.info(f"✅ Usando columna fecha: '{fecha_col}', venta: '{venta_col}'")
+        
+        # Procesar fechas
+        df["fecha"] = pd.to_datetime(df[fecha_col], errors="coerce")
+        df = df[df["fecha"].notna()]
+        df = df[df["fecha"] >= "2018-01-01"]
+        
+        # Asegurar que venta sea numérico
+        df["venta"] = pd.to_numeric(df[venta_col], errors="coerce")
+        df = df[df["venta"].notna()]
+        
+        logger.info(f"📅 Datos después de limpieza: {len(df)} registros")
+        logger.info(f"📊 Rango USD: ${df['venta'].min():.2f} - ${df['venta'].max():.2f}")
+        
+        # Crear índice trimestral
+        df["anio_trimestre"] = df["fecha"].dt.year.astype(str) + "Q" + df["fecha"].dt.quarter.astype(str)
+        
+        # Agregación trimestral
+        df_quarterly = df.groupby("anio_trimestre").agg(
+            precio_promedio_usd=("venta", "mean"),
+            volatilidad_usd=("venta", "std"),
+            precio_min_usd=("venta", "min"),
+            precio_max_usd=("venta", "max"),
+            dias=("venta", "count")
+        ).reset_index()
+        
+        # Renombrar columna para merge con turismo
+        df_quarterly = df_quarterly.rename(columns={"anio_trimestre": "indice_tiempo"})
+        
+        # Redondear valores
+        df_quarterly["precio_promedio_usd"] = df_quarterly["precio_promedio_usd"].round(2)
+        df_quarterly["volatilidad_usd"] = df_quarterly["volatilidad_usd"].round(2)
+        df_quarterly["precio_min_usd"] = df_quarterly["precio_min_usd"].round(2)
+        df_quarterly["precio_max_usd"] = df_quarterly["precio_max_usd"].round(2)
+        
+        # Guardar CSV procesado
+        processed_dir = Path(directories["processed"]) / "economico"
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        simple_path = processed_dir / "usd_quarterly_argentinadatos.csv"
+        df_quarterly.to_csv(simple_path, index=False, encoding="utf-8")
+        
+        logger.info(f"✅ USD trimestral procesado: {len(df_quarterly)} trimestres")
+        logger.info(f"📊 Rango temporal: {df_quarterly['indice_tiempo'].min()} - {df_quarterly['indice_tiempo'].max()}")
+        logger.info(f"💰 Precio promedio general: ${df_quarterly['precio_promedio_usd'].mean():.2f}")
+        
+        return {
+            "status": "processed",
+            "simple_path": str(simple_path),
+            "records": len(df_quarterly),
+            "date_range": f"{df_quarterly['indice_tiempo'].min()} - {df_quarterly['indice_tiempo'].max()}",
+            "avg_usd_price": round(df_quarterly['precio_promedio_usd'].mean(), 2)
+        }
+    except Exception as e:
+        logger.error(f"❌ Error procesando USD trimestral: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {"status": "error", "error": str(e)}
 
 @task
 def create_final_mendoza_dataset(
@@ -1547,7 +1379,7 @@ def create_final_mendoza_dataset(
 ) -> str:
     """Crea dataset final trimestral con USD sincronizado."""
     try:
-        logger.info("🎯 Creando dataset final con USD desde Investing.com...")
+        logger.info("🎯 Creando dataset final con USD desde argentinadatos.com...")
 
         processed_files = processing_summary.get("processed_files", {})
         turismo_files = processed_files.get("turismo", [])
@@ -1591,16 +1423,15 @@ def create_final_mendoza_dataset(
         # Preparar dataset final con datos de turismo
         df_final = turistas_agg[["indice_tiempo", "turistas_no_residentes_total", "turistas_aeropuerto", "turistas_cristo"]].copy()
 
-        # Merge con datos USD procesados desde Investing.com
+        # Merge con datos USD procesados desde argentinadatos.com
         if usd_quarterly.get("status") == "processed":
-            logger.info("💰 Mergeando con datos USD trimestrales desde Investing.com...")
+            logger.info("💰 Mergeando con datos USD trimestrales desde argentinadatos.com...")
             
-            # Leer datos USD trimestrales simplificados
+            # Leer datos USD trimestrales
             df_usd = pd.read_csv(usd_quarterly["simple_path"])
             
             logger.info(f"📊 Datos USD disponibles: {len(df_usd)} trimestres")
-            logger.info(f"📊 Índices USD: {sorted(df_usd['indice_tiempo'].unique())}")
-            logger.info(f"📊 Índices Turismo: {sorted(df_final['indice_tiempo'].unique())}")
+            logger.info(f"📊 Rango USD: {usd_quarterly.get('date_range', 'N/A')}")
             
             # Merge con datos USD
             df_final = df_final.merge(df_usd, on="indice_tiempo", how="left")
@@ -1610,14 +1441,14 @@ def create_final_mendoza_dataset(
             logger.info(f"✅ Merge USD completado: {usd_matches}/{len(df_final)} trimestres con datos USD")
             
             # Crear variables derivadas del USD
-            df_final['usd_alto'] = (df_final['precio_promedio_usd'] > df_final['precio_promedio_usd'].median()).astype(int)
-            df_final['usd_muy_volatil'] = (df_final['volatilidad_usd'] > 5).astype(int)
+            if usd_matches > 0:
+                df_final['usd_alto'] = (df_final['precio_promedio_usd'] > df_final['precio_promedio_usd'].median()).astype(int)
+                df_final['usd_muy_volatil'] = (df_final['volatilidad_usd'] > 5).astype(int)
             
         else:
             logger.warning("⚠️ No hay datos USD procesados disponibles")
             df_final["precio_promedio_usd"] = None
             df_final["volatilidad_usd"] = None
-            df_final["clasificacion_usd"] = "sin_datos"
 
         # Agregar variables temporales y eventos
         def extraer_año_trimestre(indice_tiempo):
@@ -1631,23 +1462,23 @@ def create_final_mendoza_dataset(
         )
 
         # Variables estacionales
-        df_final['es_verano'] = (df_final['trimestre'] == 1).astype(int)  # Q1: Ene-Mar
-        df_final['es_otoño'] = (df_final['trimestre'] == 2).astype(int)   # Q2: Abr-Jun
-        df_final['es_invierno'] = (df_final['trimestre'] == 3).astype(int) # Q3: Jul-Sep
-        df_final['es_primavera'] = (df_final['trimestre'] == 4).astype(int) # Q4: Oct-Dic
+        df_final['es_verano'] = (df_final['trimestre'] == 1).astype(int)
+        df_final['es_otoño'] = (df_final['trimestre'] == 2).astype(int)
+        df_final['es_invierno'] = (df_final['trimestre'] == 3).astype(int)
+        df_final['es_primavera'] = (df_final['trimestre'] == 4).astype(int)
 
         # Eventos importantes específicos de Mendoza
         eventos = {
-            1: "Vendimia + Verano",  # Q1: Fiesta de la Vendimia + temporada alta verano
-            2: "Otoño tranquilo",    # Q2: Temporada media, cosecha
-            3: "Invierno + Esquí",   # Q3: Vacaciones de invierno, temporada de esquí
-            4: "Primavera + Fiestas" # Q4: Temporada media-alta, fiestas de fin de año
+            1: "Vendimia + Verano",
+            2: "Otoño tranquilo",
+            3: "Invierno + Esquí",
+            4: "Primavera + Fiestas"
         }
         
         df_final["evento_importante"] = df_final["trimestre"].map(eventos).fillna("Sin evento específico")
         
         # Variable de temporada turística
-        df_final['temporada_alta'] = df_final['trimestre'].isin([1, 3]).astype(int)  # Verano e Invierno
+        df_final['temporada_alta'] = df_final['trimestre'].isin([1, 3]).astype(int)
         df_final['temporada_vendimia'] = (df_final['trimestre'] == 1).astype(int)
         
         # Crear variables lag para detectar tendencias
@@ -1702,7 +1533,6 @@ def create_final_mendoza_dataset(
         logger.info(f"🗓️ Rango: {summary['date_range']}")
         logger.info(f"🎯 Variables: {len(df_final.columns)}")
         logger.info(f"💰 Datos USD: {'SÍ' if summary['usd_data_summary']['has_usd_data'] else 'NO'}")
-        logger.info(f"📈 Promedio turistas: {summary['tourism_data_summary']['total_tourists_avg']:,}")
         
         if summary['usd_data_summary']['has_usd_data']:
             logger.info(f"💵 Precio USD promedio: ${summary['usd_data_summary']['avg_usd_price']}")
@@ -1715,8 +1545,6 @@ def create_final_mendoza_dataset(
 
     except Exception as e:
         logger.error(f"❌ Error creando dataset final con USD: {e}")
-        import traceback
-        logger.error(f"Traceback completo: {traceback.format_exc()}")
         return ""
 
 # ─── DAG Definition Mejorado ───────────────────────────────────────────────────
@@ -1724,32 +1552,26 @@ def create_final_mendoza_dataset(
 with DAG(
     dag_id="mza_turismo_etl_enhanced",
     default_args=default_args,
-    description="Pipeline ETL Mejorado - Predicción Demanda Hotelera Mendoza con USD desde Investing.com",
+    description="Pipeline ETL Mejorado - Predicción Demanda Hotelera Mendoza con USD desde argentinadatos.com",
     schedule="@monthly",
     start_date=datetime(2024, 8, 1),
     catchup=False,
     max_active_runs=1,
     max_active_tasks=10,
-    tags=["mendoza", "turismo", "economia", "usd", "investing", "enhanced", "v2.1"],
+    tags=["mendoza", "turismo", "economia", "usd", "argentinadatos", "enhanced", "v2.3"],
     doc_md="""
-    ## Pipeline ETL Mejorado - Demanda Hotelera Mendoza v2.1
+    ## Pipeline ETL Mejorado - Demanda Hotelera Mendoza v2.3
     
-    **NUEVA FUNCIONALIDAD**: Scraping de datos USD históricos desde Investing.com
+    **FUNCIONALIDAD**: Datos USD históricos desde argentinadatos.com API
     
-    ### Mejoras en datos económicos:
-    - **USD Diario**: Datos desde 01/01/2018 hasta fecha actual (con buffer de 7 días)
-    - **Promedios Trimestrales**: Sincronizados perfectamente con índices de turismo
-    - **Variables derivadas**: Volatilidad, clasificación de períodos, variaciones
-    
-    ### Fuentes de datos:
+    ### Fuentes de datos principales:
     - **Turismo**: ETI Mendoza (aeropuerto + Cristo Redentor)
-    - **USD**: Investing.com (datos diarios históricos)
+    - **USD**: argentinadatos.com (datos diarios históricos oficiales)
     - **Variables temporales**: Estacionales, eventos, tendencias
     
     ### Salida optimizada:
     - Dataset final con USD sincronizado por trimestre
     - Variables lag y de crecimiento
-    - Clasificación automática de períodos económicos
     - Listo para modelos predictivos avanzados
     """,
 ) as dag:
@@ -1757,20 +1579,25 @@ with DAG(
     dirs = create_enhanced_directories(ds="{{ ds }}")
 
     # 2. Descarga de datos tradicionales
-    all_downloads = []
-    for spec in static_specs:
+    csv_downloads = []
+    api_downloads = []
+    
+    for spec in DOWNLOAD_SPECS:
         tipo = spec.get("type", "")
         if tipo == "direct_csv":
             download_task = download_direct_csv_enhanced(spec=spec, directories=dirs)
-            all_downloads.append(download_task)
+            csv_downloads.append(download_task)
         elif tipo == "api_json":
             api_task = download_api_json(spec=spec, directories=dirs)
-            all_downloads.append(api_task)
+            api_downloads.append(api_task)
 
-    # 3. NUEVA TAREA: Scraping USD desde Investing.com
-    usd_historical = scrape_usd_historical_data(directories=dirs)
+    # Combinar todas las descargas
+    all_downloads = csv_downloads + api_downloads
+
+    # 3. Descarga USD desde argentinadatos.com
+    usd_historical = download_usd_historical_dolarapi(directories=dirs)
     
-    # 4. NUEVA TAREA: Procesar USD a promedios trimestrales
+    # 4. Procesar USD a promedios trimestrales
     usd_quarterly = process_usd_to_quarterly_averages(
         usd_data=usd_historical,
         directories=dirs
@@ -1783,30 +1610,27 @@ with DAG(
     )
 
     # 6. Dataset final MEJORADO con USD sincronizado
+   
     final_dataset_with_usd = create_final_mendoza_dataset(
         processing_summary=processing_result,
         usd_quarterly=usd_quarterly,
         directories=dirs
     )
 
-    # 7. Resto de tareas existentes
+    # 7. Matriz de features mensuales
     features_matrix = create_monthly_features_matrix(
         processing_summary=processing_result,
         directories=dirs
     )
 
-    unified_dataset = create_unified_mendoza_dataset(
-        all_downloads=all_downloads,
-        processing_summary=processing_result,
-        directories=dirs
-    )
-
+    # 8. Validación de datos
     enhanced_validation = validate_enhanced_data(
         all_downloads=all_downloads,
         processing_summary=processing_result,
         directories=dirs
     )
 
+    # 9. Reporte final
     final_enhanced_report = generate_enhanced_pipeline_report(
         validation_results=enhanced_validation,
         processing_summary=processing_result,
@@ -1814,11 +1638,36 @@ with DAG(
         directories=dirs
     )
 
-    # NUEVAS DEPENDENCIAS con USD
-    dirs >> [all_downloads, usd_historical]
+    # Dependencias del pipeline - CORREGIDAS
+    # Primero los directorios
+    dirs >> usd_historical
+    
+    # Dependencias de descarga de CSV y API
+    for download_task in csv_downloads:
+        dirs >> download_task
+    for download_task in api_downloads:
+        dirs >> download_task
+    
+    # USD processing
     usd_historical >> usd_quarterly
-    all_downloads >> processing_result
-    [processing_result, usd_quarterly] >> final_dataset_with_usd
-    processing_result >> [features_matrix, unified_dataset]
-    [all_downloads, processing_result] >> enhanced_validation
-    [enhanced_validation, processing_result, features_matrix] >> final_enhanced_report
+    
+    # Processing depende de todas las descargas completadas
+    for download_task in csv_downloads + api_downloads:
+        download_task >> processing_result
+    
+    # Dataset final depende de processing y USD
+    processing_result >> final_dataset_with_usd
+    usd_quarterly >> final_dataset_with_usd
+    
+    # Features depende de processing
+    processing_result >> features_matrix
+    
+    # Validation depende de todas las descargas y processing
+    for download_task in csv_downloads + api_downloads:
+        download_task >> enhanced_validation
+    processing_result >> enhanced_validation
+    
+    # Reporte final depende de validation, processing y features
+    enhanced_validation >> final_enhanced_report
+    processing_result >> final_enhanced_report
+    features_matrix >> final_enhanced_report

@@ -1193,8 +1193,88 @@ def create_final_mendoza_dataset(
         df_aeropuerto_full = pd.read_csv(aeropuerto_file["processed_path"])
         df_cristo_full = pd.read_csv(cristo_file["processed_path"])
         
-        df_aeropuerto = df_aeropuerto_full[["indice_tiempo", "turistas_no_residentes"]].copy()
-        df_cristo = df_cristo_full[["indice_tiempo", "turistas_no_residentes"]].copy()
+        # DEBUG: Verificar columnas disponibles
+        logger.info(f"🔍 Columnas aeropuerto: {list(df_aeropuerto_full.columns)}")
+        logger.info(f"🔍 Columnas cristo: {list(df_cristo_full.columns)}")
+        
+        # Buscar columnas de turistas de manera más flexible
+        turistas_col_aeropuerto = None
+        turistas_col_cristo = None
+        indice_col_aeropuerto = None
+        indice_col_cristo = None
+        
+        # Buscar columnas de turistas
+        for col in df_aeropuerto_full.columns:
+            if 'turistas' in col.lower() and ('no_residentes' in col.lower() or 'residentes' in col.lower()):
+                turistas_col_aeropuerto = col
+                break
+        
+        for col in df_cristo_full.columns:
+            if 'turistas' in col.lower() and ('no_residentes' in col.lower() or 'residentes' in col.lower()):
+                turistas_col_cristo = col
+                break
+        
+        # Buscar columnas de índice temporal
+        for col in df_aeropuerto_full.columns:
+            if col.lower() in ['indice_tiempo', 'fecha_std', 'periodo', 'anio_trimestre']:
+                indice_col_aeropuerto = col
+                break
+        
+        for col in df_cristo_full.columns:
+            if col.lower() in ['indice_tiempo', 'fecha_std', 'periodo', 'anio_trimestre']:
+                indice_col_cristo = col
+                break
+        
+        logger.info(f"✅ Columnas identificadas - Aeropuerto: {indice_col_aeropuerto}, {turistas_col_aeropuerto}")
+        logger.info(f"✅ Columnas identificadas - Cristo: {indice_col_cristo}, {turistas_col_cristo}")
+        
+        if not turistas_col_aeropuerto or not turistas_col_cristo:
+            logger.error("❌ No se encontraron columnas de turistas")
+            return ""
+        
+        if not indice_col_aeropuerto or not indice_col_cristo:
+            logger.error("❌ No se encontraron columnas de índice temporal")
+            return ""
+        
+        # Extraer datos necesarios
+        df_aeropuerto = df_aeropuerto_full[[indice_col_aeropuerto, turistas_col_aeropuerto]].copy()
+        df_cristo = df_cristo_full[[indice_col_cristo, turistas_col_cristo]].copy()
+        
+        # Estandarizar nombres de columnas
+        df_aeropuerto.columns = ["indice_tiempo", "turistas_no_residentes"]
+        df_cristo.columns = ["indice_tiempo", "turistas_no_residentes"]
+        
+        # CONVERTIR FECHAS A FORMATO TRIMESTRAL ANTES DE AGRUPAR
+        def convertir_fecha_a_trimestre(fecha_str):
+            """Convierte fecha '2018-01-01' a formato '2018Q1'"""
+            try:
+                if pd.isna(fecha_str):
+                    return None
+                fecha = pd.to_datetime(fecha_str)
+                año = fecha.year
+                trimestre = fecha.quarter
+                return f"{año}Q{trimestre}"
+            except:
+                return None
+        
+        # Aplicar conversión de formato
+        df_aeropuerto['indice_tiempo_original'] = df_aeropuerto['indice_tiempo']
+        df_cristo['indice_tiempo_original'] = df_cristo['indice_tiempo']
+        
+        df_aeropuerto['indice_tiempo'] = df_aeropuerto['indice_tiempo'].apply(convertir_fecha_a_trimestre)
+        df_cristo['indice_tiempo'] = df_cristo['indice_tiempo'].apply(convertir_fecha_a_trimestre)
+        
+        # Filtrar valores nulos después de conversión
+        df_aeropuerto = df_aeropuerto[df_aeropuerto['indice_tiempo'].notna()]
+        df_cristo = df_cristo[df_cristo['indice_tiempo'].notna()]
+        
+        logger.info(f"🔄 Conversión completada - Aeropuerto: {len(df_aeropuerto)} registros")
+        logger.info(f"🔄 Conversión completada - Cristo: {len(df_cristo)} registros")
+        logger.info(f"🔍 Muestra índices convertidos: {df_aeropuerto['indice_tiempo'].head().tolist()}")
+        
+        # Convertir a numérico
+        df_aeropuerto["turistas_no_residentes"] = pd.to_numeric(df_aeropuerto["turistas_no_residentes"], errors='coerce').fillna(0)
+        df_cristo["turistas_no_residentes"] = pd.to_numeric(df_cristo["turistas_no_residentes"], errors='coerce').fillna(0)
 
         # Agrupar por indice_tiempo
         agg_aeropuerto = df_aeropuerto.groupby("indice_tiempo", as_index=False)["turistas_no_residentes"].sum()
@@ -1210,6 +1290,7 @@ def create_final_mendoza_dataset(
         turistas_agg["turistas_no_residentes_total"] = turistas_agg["turistas_aeropuerto"] + turistas_agg["turistas_cristo"]
 
         logger.info(f"✅ Datos de turismo procesados: {len(turistas_agg)} trimestres")
+        logger.info(f"🔍 Muestra índice_tiempo turismo CONVERTIDO: {sorted(turistas_agg['indice_tiempo'].unique())[:5]}")
 
         # Preparar dataset final con datos de turismo
         df_final = turistas_agg[["indice_tiempo", "turistas_no_residentes_total", "turistas_aeropuerto", "turistas_cristo"]].copy()
@@ -1219,25 +1300,66 @@ def create_final_mendoza_dataset(
             logger.info("💰 Mergeando con datos USD trimestrales desde argentinadatos.com...")
             
             # Leer datos USD trimestrales
-            df_usd = pd.read_csv(usd_quarterly["simple_path"])
+            usd_path = usd_quarterly["simple_path"]
+            logger.info(f"📁 Leyendo USD desde: {usd_path}")
             
-            logger.info(f"📊 Datos USD disponibles: {len(df_usd)} trimestres")
-            logger.info(f"📊 Rango USD: {usd_quarterly.get('date_range', 'N/A')}")
-            
-            # Merge con datos USD
-            df_final = df_final.merge(df_usd, on="indice_tiempo", how="left")
-            
-            # Verificar merge
-            usd_matches = df_final['precio_promedio_usd'].notna().sum()
-            logger.info(f"✅ Merge USD completado: {usd_matches}/{len(df_final)} trimestres con datos USD")
-            
-            # Crear variables derivadas del USD (solo las necesarias)
-            if usd_matches > 0:
-                df_final['usd_alto'] = (df_final['precio_promedio_usd'] > df_final['precio_promedio_usd'].median()).astype(int)
+            if not Path(usd_path).exists():
+                logger.error(f"❌ Archivo USD no existe: {usd_path}")
+                df_final["precio_promedio_usd"] = None
+            else:
+                df_usd = pd.read_csv(usd_path)
+                
+                logger.info(f"📊 Datos USD leídos: {len(df_usd)} trimestres")
+                logger.info(f"📋 Columnas USD: {list(df_usd.columns)}")
+                logger.info(f"🔍 Muestra índice_tiempo USD: {sorted(df_usd['indice_tiempo'].unique())[:5]}")
+                logger.info(f"💰 Muestra precios USD: {df_usd['precio_promedio_usd'].head().tolist()}")
+                
+                # DEBUG: Verificar tipos de datos antes del merge
+                logger.info(f"🔍 Tipo indice_tiempo turismo: {df_final['indice_tiempo'].dtype}")
+                logger.info(f"🔍 Tipo indice_tiempo USD: {df_usd['indice_tiempo'].dtype}")
+                
+                # Asegurar que ambos índices sean string para el merge
+                df_final['indice_tiempo'] = df_final['indice_tiempo'].astype(str)
+                df_usd['indice_tiempo'] = df_usd['indice_tiempo'].astype(str)
+                
+                # Realizar merge
+                df_final_before_merge = df_final.copy()
+                df_final = df_final.merge(df_usd[['indice_tiempo', 'precio_promedio_usd']], on="indice_tiempo", how="left")
+                
+                # Verificar resultado del merge
+                usd_matches = df_final['precio_promedio_usd'].notna().sum()
+                total_rows = len(df_final)
+                
+                logger.info(f"✅ Merge USD completado: {usd_matches}/{total_rows} trimestres con datos USD")
+                
+                if usd_matches == 0:
+                    logger.error("❌ PROBLEMA: Ningún registro USD se mergeó correctamente")
+                    logger.info("🔍 Diagnóstico del merge:")
+                    logger.info(f"   - Índices únicos turismo: {sorted(df_final_before_merge['indice_tiempo'].unique())}")
+                    logger.info(f"   - Índices únicos USD: {sorted(df_usd['indice_tiempo'].unique())}")
+                    
+                    # Intentar merge manual para debug
+                    common_indices = set(df_final_before_merge['indice_tiempo'].unique()) & set(df_usd['indice_tiempo'].unique())
+                    logger.info(f"   - Índices en común: {sorted(common_indices)}")
+                    
+                    if len(common_indices) == 0:
+                        logger.error("   - NO HAY ÍNDICES EN COMÚN - revisar formato de fechas")
+                else:
+                    logger.info(f"✅ MERGE EXITOSO: {usd_matches} trimestres con datos USD sincronizados")
+                    
+                # Crear variables derivadas del USD solo si hay datos
+                if usd_matches > 0:
+                    median_usd = df_final['precio_promedio_usd'].median()
+                    df_final['usd_alto'] = (df_final['precio_promedio_usd'] > median_usd).astype(int)
+                    logger.info(f"💰 Variable usd_alto creada (mediana: ${median_usd:.2f})")
+                else:
+                    df_final['usd_alto'] = None
+                    logger.warning("⚠️ No se pudo crear variable usd_alto por falta de datos USD")
             
         else:
             logger.warning("⚠️ No hay datos USD procesados disponibles")
             df_final["precio_promedio_usd"] = None
+            df_final['usd_alto'] = None
 
         # Agregar variables temporales y eventos
         def extraer_año_trimestre(indice_tiempo):
@@ -1269,36 +1391,72 @@ def create_final_mendoza_dataset(
         # Variable de temporada turística
         df_final['temporada_alta'] = df_final['trimestre'].isin([1, 3]).astype(int)
         df_final['temporada_vendimia'] = (df_final['trimestre'] == 1).astype(int)
-        
-        # Eliminar variables lag y de crecimiento que no necesitamos
-        # df_final['turistas_lag1'] = df_final['turistas_no_residentes_total'].shift(1)
-        # df_final['turistas_variacion'] = df_final['turistas_no_residentes_total'] - df_final['turistas_lag1']
-        # df_final['turistas_crecimiento'] = (df_final['turistas_variacion'] / df_final['turistas_lag1'] * 100).round(2)
 
         # Ordenar por indice_tiempo para presentación final
         df_final = df_final.sort_values('indice_tiempo')
+
+        # DEBUG: Verificar contenido final antes de guardar
+        logger.info("🔍 VERIFICACIÓN FINAL DEL DATASET:")
+        logger.info(f"   - Total filas: {len(df_final)}")
+        logger.info(f"   - Columnas: {list(df_final.columns)}")
+        if 'precio_promedio_usd' in df_final.columns:
+            usd_not_null = df_final['precio_promedio_usd'].notna().sum()
+            logger.info(f"   - Datos USD no nulos: {usd_not_null}/{len(df_final)}")
+            if usd_not_null > 0:
+                logger.info(f"   - Rango USD: ${df_final['precio_promedio_usd'].min():.2f} - ${df_final['precio_promedio_usd'].max():.2f}")
+                logger.info(f"   - Muestra USD: {df_final[['indice_tiempo', 'precio_promedio_usd']].head()}")
 
         # Guardar archivo final
         local_data_dir = Path("/usr/local/airflow/data/raw")
         local_data_dir.mkdir(parents=True, exist_ok=True)
         output_path = local_data_dir / "mendoza_turismo_final_con_usd.csv"
+        
         df_final.to_csv(output_path, index=False, encoding="utf-8")
+        logger.info(f"💾 Dataset guardado en: {output_path}")
 
-        # Crear resumen del dataset final
+        # Verificar que el archivo se guardó correctamente
+        if output_path.exists():
+            # Leer el archivo guardado para verificar
+            df_verificacion = pd.read_csv(output_path)
+            logger.info(f"✅ Verificación post-guardado: {len(df_verificacion)} filas, {len(df_verificacion.columns)} columnas")
+            
+            if 'precio_promedio_usd' in df_verificacion.columns:
+                usd_guardado = df_verificacion['precio_promedio_usd'].notna().sum()
+                logger.info(f"💰 USD en archivo guardado: {usd_guardado} registros no nulos")
+            else:
+                logger.error("❌ Columna precio_promedio_usd NO se guardó en el archivo final")
+        else:
+            logger.error(f"❌ Error: archivo no se guardó en {output_path}")
+
+        # Crear resumen del dataset final - CONVERTIR NUMPY TYPES A PYTHON NATIVES
+        def convert_numpy_types(obj):
+            """Convierte tipos numpy a tipos Python nativos para JSON serialization"""
+            if isinstance(obj, (pd.Int64Dtype, pd.Float64Dtype)):
+                return obj.item()
+            elif hasattr(obj, 'item'):
+                return obj.item()
+            elif isinstance(obj, dict):
+                return {k: convert_numpy_types(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_types(v) for v in obj]
+            else:
+                return obj
+
         summary = {
             "creation_timestamp": datetime.now().isoformat(),
-            "total_quarters": len(df_final),
+            "total_quarters": int(len(df_final)),
             "date_range": f"{df_final['indice_tiempo'].min()} - {df_final['indice_tiempo'].max()}",
             "tourism_data_summary": {
-                "total_tourists_avg": round(df_final['turistas_no_residentes_total'].mean()),
-                "min_quarter": df_final.loc[df_final['turistas_no_residentes_total'].idxmin(), 'indice_tiempo'],
-                "max_quarter": df_final.loc[df_final['turistas_no_residentes_total'].idxmax(), 'indice_tiempo'],
+                "total_tourists_avg": int(df_final['turistas_no_residentes_total'].mean()),
+                "min_quarter": str(df_final.loc[df_final['turistas_no_residentes_total'].idxmin(), 'indice_tiempo']),
+                "max_quarter": str(df_final.loc[df_final['turistas_no_residentes_total'].idxmax(), 'indice_tiempo']),
                 "seasonal_pattern": "Q1 y Q3 típicamente más altos (Vendimia y Vacaciones de Invierno)"
             },
             "usd_data_summary": {
                 "has_usd_data": usd_quarterly.get("status") == "processed",
-                "avg_usd_price": round(df_final['precio_promedio_usd'].mean(), 2) if 'precio_promedio_usd' in df_final and df_final['precio_promedio_usd'].notna().any() else None,
-                "usd_quarters_coverage": f"{df_final['precio_promedio_usd'].notna().sum()}/{len(df_final)}" if 'precio_promedio_usd' in df_final else "0/0"
+                "avg_usd_price": float(df_final['precio_promedio_usd'].mean()) if 'precio_promedio_usd' in df_final and df_final['precio_promedio_usd'].notna().any() else None,
+                "usd_quarters_coverage": f"{int(df_final['precio_promedio_usd'].notna().sum())}/{int(len(df_final))}" if 'precio_promedio_usd' in df_final else "0/0",
+                "usd_data_found": int(df_final['precio_promedio_usd'].notna().sum()) if 'precio_promedio_usd' in df_final else 0
             },
             "features_available": list(df_final.columns),
             "ready_for_modeling": True,
@@ -1308,6 +1466,9 @@ def create_final_mendoza_dataset(
                 "temporada_vendimia", "año"
             ]
         }
+
+        # Aplicar conversión a todos los valores
+        summary = convert_numpy_types(summary)
 
         summary_path = local_data_dir / "dataset_final_summary.json"
         with open(summary_path, 'w', encoding='utf-8') as f:
@@ -1323,8 +1484,10 @@ def create_final_mendoza_dataset(
         logger.info(f"💰 Datos USD: {'SÍ' if summary['usd_data_summary']['has_usd_data'] else 'NO'}")
         
         if summary['usd_data_summary']['has_usd_data']:
-            logger.info(f"💵 Precio USD promedio: ${summary['usd_data_summary']['avg_usd_price']}")
+            if summary['usd_data_summary']['avg_usd_price'] is not None:
+                logger.info(f"💵 Precio USD promedio: ${summary['usd_data_summary']['avg_usd_price']:.2f}")
             logger.info(f"📊 Cobertura USD: {summary['usd_data_summary']['usd_quarters_coverage']}")
+            logger.info(f"🔢 Registros USD encontrados: {summary['usd_data_summary']['usd_data_found']}")
         
         logger.info("✅ LISTO PARA MODELADO PREDICTIVO")
         logger.info("=" * 70)
@@ -1333,9 +1496,11 @@ def create_final_mendoza_dataset(
 
     except Exception as e:
         logger.error(f"❌ Error creando dataset final con USD: {e}")
+        import traceback
+        logger.error(f"Traceback completo: {traceback.format_exc()}")
         return ""
 
-# ─── DAG Definition Mejorado ───────────────────────────────────────────────────
+    # ─── DAG Definition Mejorado ───────────────────────────────────────────────────
 
 with DAG(
     dag_id="mza_turismo_etl_enhanced",

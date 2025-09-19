@@ -1,31 +1,33 @@
-indice_tiempo;turistas_no_residentes_total;precio_promedio_usd;evento_importante
-1/1/2018;95397.0;;Sin evento
-1/4/2018;73281.0;;Sin evento
-1/7/2018;73973.0;;Sin evento
-1/10/2018;107204.0;;Sin evento
-1/1/2019;110450.0;;Sin evento
-1/4/2019;72565.0;;Sin evento
-1/7/2019;80845.0;;Sin evento
-1/10/2019;117603.0;;Sin evento
-1/1/2020;115368.0;;Sin evento
-1/4/2020;0.0;;Sin evento
-1/7/2020;0.0;;Sin evento
-1/10/2020;0.0;;Sin evento
-1/1/2021;0.0;;Sin evento
-1/4/2021;0.0;;Sin evento
-1/7/2021;0.0;;Sin evento
-1/10/2021;8296.0;;Sin evento
-1/1/2022;31961.0;;Sin evento
-1/4/2022;44748.0;;Sin evento
-1/7/2022;55271.0;;Sin evento
-1/10/2022;91287.0;;Sin evento
-1/1/2023;121703.0;;Sin evento
-1/4/2023;110528.0;;Sin evento
-1/7/2023;56650.0;;Sin evento
-1/10/2023;73896.0;;Sin evento
-1/1/2024;86462.0;;Sin evento
-1/4/2024;64010.0;;Sin evento
-1/7/2024;68963.0;;Sin evento
-1/10/2024;87238.0;;Sin evento
-1/1/2025;89956.0;;Sin evento
-1/4/2025;59066.0;;Sin evento
+indice_tiempo;turistas_no_residentes_total;turistas_aeropuerto;turistas_cristo;precio_promedio_usd;dias;año;trimestre;es_verano;es_otoño;es_invierno;es_primavera;evento_importante;temporada_alta;temporada_vendimia
+1/7/2017;22913.0;22913.0;0.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/10/2017;27163.0;27163.0;0.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/1/2018;95397.0;23910.0;71487.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/4/2018;73281.0;28979.0;44302.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/7/2018;73973.0;31012.0;42961.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/10/2018;107204.0;37937.0;69267.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/1/2019;110450.0;35885.0;74565.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/4/2019;72565.0;26869.0;45696.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/7/2019;80845.0;28457.0;52388.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/10/2019;117603.0;33033.0;84570.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/1/2020;115368.0;23111.0;92257.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/4/2020;0.0;0.0;0.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/7/2020;0.0;0.0;0.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/10/2020;0.0;0.0;0.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/1/2021;0.0;0.0;0.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/4/2021;0.0;0.0;0.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/7/2021;0.0;0.0;0.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/10/2021;8296.0;5229.0;3067.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/1/2022;31961.0;13159.0;18802.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/4/2022;44748.0;13281.0;31467.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/7/2022;55271.0;22661.0;32610.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/10/2022;91287.0;27644.0;63643.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/1/2023;121703.0;34426.0;87277.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/4/2023;110528.0;34787.0;75741.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/7/2023;56650.0;43404.0;13246.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/10/2023;73896.0;40401.0;33495.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/1/2024;86462.0;44294.0;42168.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/4/2024;64010.0;42428.0;21582.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/7/2024;68963.0;45117.0;23846.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/10/2024;87238.0;42125.0;45113.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/1/2025;89956.0;39909.0;50047.0;;;;;0;0;0;0;Sin evento específico;0;0
+1/4/2025;59066.0;34268.0;24798.0;;;;;0;0;0;0;Sin evento específico;0;0

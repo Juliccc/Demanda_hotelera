@@ -1,5 +1,5 @@
-# Configuración optimizada para pipeline de demanda hotelera Mendoza v2.2
-# Fuentes principales: ETI Mendoza + dolarapi.com
+# Configuración optimizada para pipeline de demanda hotelera Mendoza v2.3
+# Fuentes principales: ETI Mendoza + argentinadatos.com
 
 # -------------------------------
 # Turismo (ETI - CSVs directos)  
@@ -24,35 +24,13 @@ eti_cristo_redentor:
 # Variables económicas principales
 # -------------------------------
 usd_dolarapi:
-  dataset_name: "usd_ars_historico_dolarapi"
-  api_url: "https://dolarapi.com/v1/dolares/oficial"  # Base URL, fechas se agregan dinámicamente
-  type: "api_json_daily"  # Nuevo tipo para indicar descarga día por día
+  dataset_name: "usd_ars_historico_argentinadatos"
+  api_url: "https://api.argentinadatos.com/v1/cotizaciones/dolares/"
+  type: "api_json"
   min_bytes: 5000
-  start_date: "2018-01-01"
-  description: "Cotización USD-ARS histórica diaria desde dolarapi.com (día por día)"
+  description: "Cotización USD histórica desde argentinadatos.com (filtrado por oficial desde 2018)"
   category: "economico"
   enabled: true
-  daily_download_config:
-    max_failures: 50  # Permitir fallos en fechas sin datos
-    rate_limit_seconds: 0.1  # Pausa entre requests
-    timeout_per_request: 30
-    retry_delay: 1  # Pausa adicional en caso de error
-  validation:
-    min_price: 10.0
-    max_price: 3000.0
-    expected_fields: ["fecha", "compra", "venta"]
-
-# -------------------------------
-# Datos económicos complementarios (opcional)
-# -------------------------------
-indec_inflacion:
-  dataset_name: "inflacion_mensual_indec"
-  api_url: "https://apis.datos.gob.ar/series/api/series/?ids=148.3_IJNACIO_DICI_M_26&start_date=2018-01-01&limit=5000"
-  type: "api_json"
-  min_bytes: 1000
-  description: "Índice de inflación mensual INDEC"
-  category: "economico"
-  enabled: false  # Opcional - deshabilitado por defecto
 
 # -------------------------------
 # Configuración del pipeline
@@ -78,26 +56,11 @@ validation:
   usd_validation:
     min_price: 10.0
     max_price: 3000.0
-    max_daily_change: 50  # Máximo cambio diario %
+    max_daily_change: 50
     require_recent_data: true
 
 # -------------------------------
-# Configuración de logs y debugging
-# -------------------------------
-logging_config:
-  enable_detailed_logs: true
-  log_data_samples: true
-  max_sample_rows: 5
-  
-  # Métricas a trackear
-  track_metrics:
-    - "download_success_rate"
-    - "data_quality_score"
-    - "usd_data_coverage"
-    - "tourism_data_completeness"
-
-# -------------------------------
-# Agregación y procesamiento (consolidado)
+# Agregación y procesamiento
 # -------------------------------
 aggregation:
   target_frequency: "quarterly"
@@ -106,43 +69,69 @@ aggregation:
     methods: ["mean", "min", "max", "std"]
     calculate_volatility: true
     classify_periods: true
-    volatility_threshold: 5.0  # % para considerar alta volatilidad
+    volatility_threshold: 5.0
   
   tourism_aggregation:
     methods: ["sum", "mean"]
     calculate_growth: true
     seasonal_adjustment: true
-    lag_periods: [1, 4]  # 1 y 4 trimestres atrás
+    lag_periods: [1, 4]
 
 feature_engineering:
   seasonal_variables: true
-  lag_periods: [1, 4]  # 1 y 4 trimestres atrás
-  
-  # Términos de interacción
-  interaction_terms:
-    - ["precio_promedio_usd", "temporada_alta"]
-    - ["volatilidad_usd", "evento_importante"]
+  lag_periods: [1, 4]
   
   # Variables derivadas automáticas
   derived_variables:
     usd_categories: ["bajo", "medio", "alto", "muy_alto"]
     tourism_categories: ["muy_bajo", "bajo", "medio", "alto", "muy_alto"]
-    volatility_threshold: 5.0  # % para considerar alta volatilidad
+    volatility_threshold: 5.0
   
   # Variables de eventos específicas de Mendoza
   mendoza_events:
-    vendimia_quarter: 1  # Q1 (Marzo)
-    winter_vacation_quarter: 3  # Q3 (Julio)
-    high_season_quarters: [1, 3]  # Verano e Invierno
+    vendimia_quarter: 1
+    winter_vacation_quarter: 3
+    high_season_quarters: [1, 3]
 
 # -------------------------------
-# URLs dinámicas (mantenidas para futuro)
+# Configuración de salida
 # -------------------------------
-indec_turismo_dinamico:
-  dataset_name: "turismo_indec_dinamico"
-  base_url: "https://www.indec.gob.ar/indec/web/Nivel4-Tema-4-35-61"
-  search_pattern: "turismo.*\\.csv$"
-  type: "dynamic_url"
+output_config:
+  final_dataset_name: "mendoza_turismo_final_con_usd.csv"
+  summary_report: true
+  feature_matrix: true
+  quarterly_aggregation: true
+  
+  columns_order:
+    - "indice_tiempo"
+    - "año"
+    - "trimestre"
+    - "turistas_no_residentes_total"
+    - "turistas_aeropuerto"
+    - "turistas_cristo"
+    - "precio_promedio_usd"
+    - "usd_alto"
+    - "temporada_alta"
+    - "temporada_vendimia"
+    - "evento_importante"
+    - "es_verano"
+    - "es_otoño"
+    - "es_invierno"
+    - "es_primavera"
+
+# -------------------------------
+# Configuración de logs
+# -------------------------------
+logging_config:
+  enable_detailed_logs: true
+  log_data_samples: true
+  max_sample_rows: 5
+  
+  track_metrics:
+    - "download_success_rate"
+    - "data_quality_score"
+    - "usd_data_coverage"
+    - "tourism_data_completeness"
   fallback_type: "direct_csv"
   min_bytes: 5000
   description: "Datos turísticos INDEC con URL dinámica"

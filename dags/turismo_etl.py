@@ -665,228 +665,6 @@ def process_and_standardize_data(
         return {"error": str(e), "success": False}
 
 @task
-def create_monthly_features_matrix(
-    processing_summary: Dict[str, Any],
-    directories: Dict[str, str]
-) -> str:
-    """Crea matriz de features mensuales para el modelo predictivo."""
-    try:
-        if not processing_summary.get("success", True):
-            logger.error("No se puede crear matriz de features sin datos procesados")
-            return ""
-        
-        logger.info("🔧 Iniciando creación de matriz de features...")
-        logger.info(f"Processing summary recibido: {processing_summary}")
-        
-        processed_dir = Path(directories["processed"])
-        features_dir = Path(directories["features"])
-        
-        # Diccionario para almacenar series temporales por categoría
-        time_series_data = {}
-        
-        # DEBUG: Verificar qué archivos hay disponibles
-        processed_files = processing_summary.get("processed_files", {})
-        logger.info(f"📂 Categorías disponibles: {list(processed_files.keys())}")
-        for category, files in processed_files.items():
-            logger.info(f"📁 {category}: {len(files)} archivos")
-            for file_info in files:
-                logger.info(f"  - {file_info.get('original_file', 'unknown')}: {file_info.get('rows', 0)} filas")
-        
-        # Procesar cada categoría de datos
-        for category, files in processed_files.items():
-            logger.info(f"🔍 Procesando categoría: {category}")
-            category_data = []
-            
-            for file_info in files:
-                try:
-                    file_path = file_info["processed_path"]
-                    logger.info(f"📊 Leyendo archivo: {file_path}")
-                    
-                    # Verificar que el archivo existe
-                    if not Path(file_path).exists():
-                        logger.error(f"❌ Archivo no existe: {file_path}")
-                        continue
-                    
-                    df = pd.read_csv(file_path)
-                    logger.info(f"📈 Archivo leído: {len(df)} filas, columnas: {list(df.columns)}")
-                    
-                    if 'fecha_std' in df.columns and not df.empty:
-                        logger.info(f"✅ Archivo tiene fecha_std y datos: {file_info['original_file']}")
-                        
-                        # Mostrar algunas fechas para debug
-                        logger.info(f"📅 Primeras fechas: {df['fecha_std'].head()}")
-                        
-                        df['fecha_std'] = pd.to_datetime(df['fecha_std'], errors='coerce')
-                        
-                        # Verificar fechas válidas después de conversión
-                        valid_dates = df['fecha_std'].notna().sum()
-                        logger.info(f"📅 Fechas válidas después de conversión: {valid_dates}/{len(df)}")
-                        
-                        if valid_dates == 0:
-                            logger.warning(f"⚠️ No hay fechas válidas en {file_info['original_file']}")
-                            continue
-                        
-                        # Agregar a nivel mensual
-                        df['anio_mes'] = df['fecha_std'].dt.to_period('M')
-                        logger.info(f"📅 Períodos únicos: {df['anio_mes'].unique()}")
-                        
-                        # Identificar columnas numéricas para agregar
-                        numeric_cols = df.select_dtypes(include=['number']).columns
-                        logger.info(f"🔢 Columnas numéricas encontradas: {list(numeric_cols)}")
-                        
-                        if len(numeric_cols) > 0:
-                            try:
-                                monthly_agg = df.groupby('anio_mes')[numeric_cols].agg(['mean', 'sum', 'count']).reset_index()
-                                monthly_agg.columns = ['anio_mes'] + [f"{col[0]}_{col[1]}" for col in monthly_agg.columns[1:]]
-                                monthly_agg['fuente'] = file_info["original_file"]
-                                category_data.append(monthly_agg)
-                                
-                                logger.info(f"✅ Agregación mensual exitosa: {len(monthly_agg)} períodos")
-                                logger.info(f"📊 Columnas agregadas: {list(monthly_agg.columns)}")
-                                
-                            except Exception as e:
-                                logger.error(f"❌ Error en agregación mensual: {e}")
-                                continue
-                        else:
-                            logger.warning(f"⚠️ No hay columnas numéricas para agregar en {file_info['original_file']}")
-                    else:
-                        if 'fecha_std' not in df.columns:
-                            logger.warning(f"⚠️ No hay columna fecha_std en {file_info['original_file']}")
-                            logger.info(f"📋 Columnas disponibles: {list(df.columns)}")
-                        if df.empty:
-                            logger.warning(f"⚠️ DataFrame vacío: {file_info['original_file']}")
-                            
-                except Exception as e:
-                    logger.error(f"❌ Error procesando {file_info.get('processed_path', 'unknown')}: {e}")
-                    continue
-            
-            if category_data:
-                # Concatenar todos los datos de la categoría
-                logger.info(f"🔗 Concatenando {len(category_data)} DataFrames para categoría {category}")
-                category_df = pd.concat(category_data, ignore_index=True)
-                time_series_data[category] = category_df
-                logger.info(f"✅ Categoría {category} procesada: {len(category_df)} registros")
-            else:
-                logger.warning(f"⚠️ No se generaron datos para categoría {category}")
-        
-        if not time_series_data:
-            logger.error("❌ No se generaron datos de series temporales")
-            logger.info("🔍 Revisando archivos procesados disponibles:")
-            
-            # Debug adicional: verificar directamente los archivos en disco
-            if processed_dir.exists():
-                for category_dir in processed_dir.iterdir():
-                    if category_dir.is_dir():
-                        logger.info(f"📂 Directorio {category_dir.name}:")
-                        for file_path in category_dir.iterdir():
-                            if file_path.suffix == '.csv':
-                                try:
-                                    df_test = pd.read_csv(file_path)
-                                    logger.info(f"  📄 {file_path.name}: {len(df_test)} filas, columnas: {list(df_test.columns)}")
-                                except Exception as e:
-                                    logger.error(f"  ❌ Error leyendo {file_path.name}: {e}")
-            else:
-                logger.error(f"❌ Directorio processed no existe: {processed_dir}")
-            
-            return ""
-        
-        logger.info(f"🎯 Datos de series temporales generados para {len(time_series_data)} categorías")
-        
-        # Crear matriz unificada
-        base_periods = None
-        unified_features = None
-        
-        for category, df in time_series_data.items():
-            logger.info(f"🔧 Procesando categoría {category} para matriz unificada")
-            
-            if df.empty:
-                logger.warning(f"⚠️ DataFrame vacío para categoría {category}")
-                continue
-                
-            # Crear rango de períodos base
-            if base_periods is None:
-                min_period = df['anio_mes'].min()
-                max_period = df['anio_mes'].max()
-                logger.info(f"📅 Rango de períodos: {min_period} a {max_period}")
-                base_periods = pd.period_range(start=min_period, end=max_period, freq='M')
-                unified_features = pd.DataFrame({'anio_mes': base_periods})
-                logger.info(f"📅 Períodos base creados: {len(base_periods)} meses")
-            
-            # Agregar features de esta categoría
-            category_features = df.groupby('anio_mes').agg({
-                col: 'mean' for col in df.columns if col not in ['anio_mes', 'fuente']
-            }).reset_index()
-            
-            # Renombrar columnas con prefijo de categoría
-            category_features.columns = ['anio_mes'] + [f"{category}_{col}" for col in category_features.columns[1:]]
-            
-            logger.info(f"🏷️ Features para {category}: {list(category_features.columns)}")
-            
-            # Merge con matriz unificada
-            unified_features = unified_features.merge(category_features, on='anio_mes', how='left')
-            logger.info(f"🔗 Merge completado, columnas totales: {len(unified_features.columns)}")
-        
-        # Agregar variables derivadas
-        unified_features['anio'] = unified_features['anio_mes'].dt.year
-        unified_features['mes'] = unified_features['anio_mes'].dt.month
-        unified_features['trimestre'] = unified_features['anio_mes'].dt.quarter
-        
-        # Variables estacionales
-        unified_features['es_verano'] = unified_features['mes'].isin([12, 1, 2]).astype(int)
-        unified_features['es_otono'] = unified_features['mes'].isin([3, 4, 5]).astype(int)
-        unified_features['es_invierno'] = unified_features['mes'].isin([6, 7, 8]).astype(int)
-        unified_features['es_primavera'] = unified_features['mes'].isin([9, 10, 11]).astype(int)
-        
-        # Variables de eventos importantes
-        unified_features['mes_vendimia'] = (unified_features['mes'] == 3).astype(int)
-        unified_features['vacaciones_verano'] = unified_features['mes'].isin([12, 1, 2]).astype(int)
-        unified_features['vacaciones_invierno'] = (unified_features['mes'] == 7).astype(int)
-        
-        # Convertir anio_mes a string para compatibilidad
-        unified_features['anio_mes_str'] = unified_features['anio_mes'].astype(str)
-        
-        logger.info(f"🎯 Matriz final: {len(unified_features)} filas x {len(unified_features.columns)} columnas")
-        
-        # Guardar matriz de features
-        features_path = features_dir / "monthly_features_matrix.csv"
-        unified_features.to_csv(features_path, index=False, encoding='utf-8')
-        
-        # Guardar metadata de features
-        features_metadata = {
-            "creation_timestamp": datetime.now().isoformat(),
-            "total_months": len(unified_features),
-            "date_range": f"{unified_features['anio_mes'].min()} - {unified_features['anio_mes'].max()}",
-            "total_features": len(unified_features.columns),
-            "feature_categories": {
-                "turismo": len([col for col in unified_features.columns if col.startswith('turismo_')]),
-                "economico": len([col for col in unified_features.columns if col.startswith('economico_')]),
-                "infraestructura": len([col for col in unified_features.columns if col.startswith('infraestructura_')]),
-                "temporal": len([col for col in unified_features.columns if col in ['anio', 'mes', 'trimestre']]),
-                "estacional": len([col for col in unified_features.columns if col.startswith('es_')]),
-                "eventos": len([col for col in unified_features.columns if 'vendimia' in col or 'vacaciones' in col])
-            },
-            "missing_data_percentage": round((unified_features.isnull().sum().sum() / (len(unified_features) * len(unified_features.columns))) * 100, 2),
-            "recommended_target_variables": [
-                "turismo_valor_mean",  # Para regresión
-                "infraestructura_ocupacion_mean"  # Si está disponible
-            ]
-        }
-        
-        metadata_path = features_dir / "features_metadata.json"
-        with open(metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(features_metadata, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"✅ Matriz de features creada: {len(unified_features)} meses x {len(unified_features.columns)} variables")
-        logger.info(f"📅 Rango temporal: {features_metadata['date_range']}")
-        logger.info(f"❓ Datos faltantes: {features_metadata['missing_data_percentage']}%")
-        
-        return str(features_path)
-        
-    except Exception as e:
-        logger.error(f"❌ Error creando matriz de features: {e}")
-        return ""
-
-@task
 def validate_enhanced_data(
     all_downloads: List[Any],
     processing_summary: Dict[str, Any],
@@ -1042,7 +820,6 @@ def validate_enhanced_data(
 def generate_enhanced_pipeline_report(
     validation_results: Dict[str, Any],
     processing_summary: Dict[str, Any],
-    features_path: str,
     directories: Dict[str, str]
 ) -> str:
     """Genera reporte final mejorado."""
@@ -1057,11 +834,6 @@ def generate_enhanced_pipeline_report(
             },
             "data_acquisition": validation_results,
             "data_processing": processing_summary,
-            "feature_engineering": {
-                "features_matrix_created": bool(features_path),
-                "features_path": features_path,
-                "ready_for_modeling": validation_results.get("model_readiness", {}).get("overall_ready", False)
-            },
             "configuration_used": {
                 "sources_configured": len(DOWNLOAD_SPECS),
                 "validation_enabled": VALIDATION_CONFIG.get("enable_data_quality_checks", True),
@@ -1079,7 +851,6 @@ def generate_enhanced_pipeline_report(
             },
             "next_steps": [
                 "Dataset multi-dimensional listo para análisis exploratorio avanzado",
-                "Matriz de features mensuales disponible para modelado",
                 "Variables económicas y estacionales incorporadas",
                 "Preparar notebook para EDA con correlaciones entre variables",
                 "Implementar modelos de serie temporal (ARIMA, Prophet, LSTM)"
@@ -1088,9 +859,6 @@ def generate_enhanced_pipeline_report(
         }
         
         # Generar recomendaciones basadas en resultados
-        if not pipeline_report["feature_engineering"]["ready_for_modeling"]:
-            pipeline_report["recommendations"].append("Revisar calidad de datos antes del modelado")
-        
         if validation_results.get("success_rate", 0) < 80:
             pipeline_report["recommendations"].append("Mejorar robustez de descarga de datos")
         
@@ -1111,24 +879,16 @@ def generate_enhanced_pipeline_report(
         success_rate = validation_results.get("success_rate", 0)
         total_files = validation_results.get("total_files", 0)
         successful_files = validation_results.get("successful_files", 0)
-        ready_for_model = pipeline_report["feature_engineering"]["ready_for_modeling"]
         
         logger.info("=" * 70)
         logger.info("PIPELINE MEJORADO DE DEMANDA HOTELERA COMPLETADO")
         logger.info("=" * 70)
         logger.info(f"Archivos procesados: {successful_files}/{total_files} ({success_rate}%)")
         logger.info(f"Categorías de datos: {', '.join(pipeline_report['data_summary']['categories_processed'])}")
-        logger.info(f"Features creados: {'SI' if features_path else 'NO'}")
-        logger.info(f"Listo para modelado: {'SI' if ready_for_model else 'NO'}")
         logger.info(f"Variables económicas: {'SI' if pipeline_report['data_summary']['critical_data_available']['economic'] else 'NO'}")
         logger.info(f"Directorio de datos: {directories['base']}")
         logger.info(f"Reporte completo: {report_path.name}")
-        
-        if ready_for_model:
-            logger.info("LISTO PARA MODELADO PREDICTIVO AVANZADO")
-        else:
-            logger.info("REVISAR CALIDAD DE DATOS ANTES DE MODELADO")
-            
+        logger.info("LISTO PARA MODELADO PREDICTIVO AVANZADO")
         logger.info("=" * 70)
         
         return str(report_path)
@@ -1192,28 +952,23 @@ def resolve_dynamic_urls(spec: Dict[str, Any]) -> Dict[str, Any]:
 @task
 def download_usd_historical_dolarapi(directories: dict) -> dict:
     """
-    Descarga datos históricos del dólar oficial desde 
-    https://api.argentinadatos.com/v1/dolar/historico
-    desde el 01-01-2018 hasta la fecha actual.
+    Descarga datos históricos del dólar desde 
+    https://api.argentinadatos.com/v1/cotizaciones/dolares/
+    y filtra por dólar oficial desde 2018-01-01 hasta la fecha actual.
     """
     try:
-        # Configurar parámetros
-        url = "https://api.argentinadatos.com/v1/dolar/historico"
-        params = {
-            "tipo": "oficial",  # Dólar oficial
-            "desde": "2018-01-01",
-            "hasta": datetime.now().strftime("%Y-%m-%d")
-        }
+        # Nueva URL que devuelve todo el histórico
+        url = "https://api.argentinadatos.com/v1/cotizaciones/dolares/"
         
         headers = {
             "User-Agent": "TurismoDataPipeline/2.0",
             "Accept": "application/json"
         }
         
-        logger.info(f"🔄 Descargando USD oficial desde {params['desde']} hasta {params['hasta']}")
+        logger.info(f"🔄 Descargando histórico completo del dólar desde argentinadatos.com")
         logger.info(f"🔗 URL: {url}")
         
-        response = requests.get(url, params=params, headers=headers, timeout=120)
+        response = requests.get(url, headers=headers, timeout=120)
         response.raise_for_status()
         
         data = response.json()
@@ -1226,33 +981,75 @@ def download_usd_historical_dolarapi(directories: dict) -> dict:
             logger.error("❌ No se recibieron datos USD")
             return {"status": "error", "error": "No se recibieron datos"}
         
+        logger.info(f"📊 Datos totales recibidos: {len(data)} registros")
+        
+        # Filtrar por dólar oficial y fecha desde 2018-01-01
+        fecha_inicio = datetime(2018, 1, 1)
+        fecha_actual = datetime.now()
+        
+        datos_filtrados = []
+        
+        for record in data:
+            # Verificar que sea dólar oficial
+            casa = record.get('casa', '').lower()
+            if 'oficial' not in casa:
+                continue
+            
+            # Verificar fecha
+            fecha_str = record.get('fecha')
+            if not fecha_str:
+                continue
+            
+            try:
+                # Parsear fecha (formato: YYYY-MM-DD)
+                fecha = datetime.strptime(fecha_str, '%Y-%m-%d')
+                
+                # Filtrar por rango de fechas
+                if fecha >= fecha_inicio and fecha <= fecha_actual:
+                    datos_filtrados.append(record)
+            except ValueError:
+                # Si no se puede parsear la fecha, intentar otros formatos
+                try:
+                    fecha = datetime.fromisoformat(fecha_str.replace('Z', '+00:00'))
+                    if fecha >= fecha_inicio and fecha <= fecha_actual:
+                        datos_filtrados.append(record)
+                except:
+                    continue
+        
+        if len(datos_filtrados) == 0:
+            logger.error("❌ No se encontraron datos del dólar oficial desde 2018-01-01")
+            return {"status": "error", "error": "No hay datos del dólar oficial en el rango de fechas"}
+        
+        logger.info(f"✅ Datos filtrados del dólar oficial: {len(datos_filtrados)} registros")
+        
         # Validar estructura de datos
-        sample_record = data[0]
+        sample_record = datos_filtrados[0]
         logger.info(f"📋 Estructura de datos de muestra: {list(sample_record.keys())}")
         
-        # Guardar datos raw
+        # Guardar datos raw filtrados
         raw_dir = Path(directories["raw"]) / "economico"
         raw_dir.mkdir(parents=True, exist_ok=True)
         dest_path = raw_dir / "usd_historico_argentinadatos.json"
         
         with open(dest_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            json.dump(datos_filtrados, f, indent=2, ensure_ascii=False)
         
-        # Análisis de datos recibidos
-        dates = [record.get('fecha') for record in data if record.get('fecha')]
+        # Análisis de datos filtrados
+        dates = [record.get('fecha') for record in datos_filtrados if record.get('fecha')]
         date_range = f"{min(dates)} - {max(dates)}" if dates else "N/A"
         
-        logger.info(f"✅ Datos USD descargados desde argentinadatos.com: {len(data)} registros")
-        logger.info(f"📊 Rango de fechas: {date_range}")
+        logger.info(f"✅ Datos USD oficiales filtrados guardados: {len(datos_filtrados)} registros")
+        logger.info(f"📊 Rango de fechas filtrado: {date_range}")
         logger.info(f"📋 Campos en cada registro: {list(sample_record.keys())}")
         
         return {
             "status": "downloaded",
             "path": str(dest_path),
-            "records": len(data),
-            "data": data,
+            "records": len(datos_filtrados),
+            "data": datos_filtrados,
             "date_range": date_range,
-            "api_source": "argentinadatos.com"
+            "api_source": "argentinadatos.com",
+            "filter_applied": "dolar_oficial_desde_2018"
         }
         
     except requests.exceptions.RequestException as e:
@@ -1330,12 +1127,9 @@ def process_usd_to_quarterly_averages(
         # Crear índice trimestral
         df["anio_trimestre"] = df["fecha"].dt.year.astype(str) + "Q" + df["fecha"].dt.quarter.astype(str)
         
-        # Agregación trimestral
+        # Agregación trimestral - solo precio promedio y días
         df_quarterly = df.groupby("anio_trimestre").agg(
             precio_promedio_usd=("venta", "mean"),
-            volatilidad_usd=("venta", "std"),
-            precio_min_usd=("venta", "min"),
-            precio_max_usd=("venta", "max"),
             dias=("venta", "count")
         ).reset_index()
         
@@ -1344,9 +1138,6 @@ def process_usd_to_quarterly_averages(
         
         # Redondear valores
         df_quarterly["precio_promedio_usd"] = df_quarterly["precio_promedio_usd"].round(2)
-        df_quarterly["volatilidad_usd"] = df_quarterly["volatilidad_usd"].round(2)
-        df_quarterly["precio_min_usd"] = df_quarterly["precio_min_usd"].round(2)
-        df_quarterly["precio_max_usd"] = df_quarterly["precio_max_usd"].round(2)
         
         # Guardar CSV procesado
         processed_dir = Path(directories["processed"]) / "economico"
@@ -1440,15 +1231,13 @@ def create_final_mendoza_dataset(
             usd_matches = df_final['precio_promedio_usd'].notna().sum()
             logger.info(f"✅ Merge USD completado: {usd_matches}/{len(df_final)} trimestres con datos USD")
             
-            # Crear variables derivadas del USD
+            # Crear variables derivadas del USD (solo las necesarias)
             if usd_matches > 0:
                 df_final['usd_alto'] = (df_final['precio_promedio_usd'] > df_final['precio_promedio_usd'].median()).astype(int)
-                df_final['usd_muy_volatil'] = (df_final['volatilidad_usd'] > 5).astype(int)
             
         else:
             logger.warning("⚠️ No hay datos USD procesados disponibles")
             df_final["precio_promedio_usd"] = None
-            df_final["volatilidad_usd"] = None
 
         # Agregar variables temporales y eventos
         def extraer_año_trimestre(indice_tiempo):
@@ -1481,11 +1270,10 @@ def create_final_mendoza_dataset(
         df_final['temporada_alta'] = df_final['trimestre'].isin([1, 3]).astype(int)
         df_final['temporada_vendimia'] = (df_final['trimestre'] == 1).astype(int)
         
-        # Crear variables lag para detectar tendencias
-        df_final = df_final.sort_values(['año', 'trimestre'])
-        df_final['turistas_lag1'] = df_final['turistas_no_residentes_total'].shift(1)
-        df_final['turistas_variacion'] = df_final['turistas_no_residentes_total'] - df_final['turistas_lag1']
-        df_final['turistas_crecimiento'] = (df_final['turistas_variacion'] / df_final['turistas_lag1'] * 100).round(2)
+        # Eliminar variables lag y de crecimiento que no necesitamos
+        # df_final['turistas_lag1'] = df_final['turistas_no_residentes_total'].shift(1)
+        # df_final['turistas_variacion'] = df_final['turistas_no_residentes_total'] - df_final['turistas_lag1']
+        # df_final['turistas_crecimiento'] = (df_final['turistas_variacion'] / df_final['turistas_lag1'] * 100).round(2)
 
         # Ordenar por indice_tiempo para presentación final
         df_final = df_final.sort_values('indice_tiempo')
@@ -1516,8 +1304,8 @@ def create_final_mendoza_dataset(
             "ready_for_modeling": True,
             "recommended_target": "turistas_no_residentes_total",
             "key_predictors": [
-                "precio_promedio_usd", "volatilidad_usd", "temporada_alta", 
-                "temporada_vendimia", "turistas_lag1", "año"
+                "precio_promedio_usd", "temporada_alta", 
+                "temporada_vendimia", "año"
             ]
         }
 
@@ -1567,12 +1355,12 @@ with DAG(
     ### Fuentes de datos principales:
     - **Turismo**: ETI Mendoza (aeropuerto + Cristo Redentor)
     - **USD**: argentinadatos.com (datos diarios históricos oficiales)
-    - **Variables temporales**: Estacionales, eventos, tendencias
+    - **Variables temporales**: Estacionales, eventos
     
     ### Salida optimizada:
     - Dataset final con USD sincronizado por trimestre
     - Variables lag y de crecimiento
-    - Listo para modelos predictivos avanzados
+    - Listo para modelos de serie temporal avanzados
     """,
 ) as dag:
     # 1. Preparación expandida
@@ -1610,35 +1398,27 @@ with DAG(
     )
 
     # 6. Dataset final MEJORADO con USD sincronizado
-   
     final_dataset_with_usd = create_final_mendoza_dataset(
         processing_summary=processing_result,
         usd_quarterly=usd_quarterly,
         directories=dirs
     )
 
-    # 7. Matriz de features mensuales
-    features_matrix = create_monthly_features_matrix(
-        processing_summary=processing_result,
-        directories=dirs
-    )
-
-    # 8. Validación de datos
+    # 7. Validación de datos
     enhanced_validation = validate_enhanced_data(
         all_downloads=all_downloads,
         processing_summary=processing_result,
         directories=dirs
     )
 
-    # 9. Reporte final
+    # 8. Reporte final
     final_enhanced_report = generate_enhanced_pipeline_report(
         validation_results=enhanced_validation,
         processing_summary=processing_result,
-        features_path=features_matrix,
         directories=dirs
     )
 
-    # Dependencias del pipeline - CORREGIDAS
+    # Dependencias del pipeline - SIMPLIFICADAS
     # Primero los directorios
     dirs >> usd_historical
     
@@ -1659,15 +1439,11 @@ with DAG(
     processing_result >> final_dataset_with_usd
     usd_quarterly >> final_dataset_with_usd
     
-    # Features depende de processing
-    processing_result >> features_matrix
-    
     # Validation depende de todas las descargas y processing
     for download_task in csv_downloads + api_downloads:
         download_task >> enhanced_validation
     processing_result >> enhanced_validation
     
-    # Reporte final depende de validation, processing y features
+    # Reporte final depende de validation y processing
     enhanced_validation >> final_enhanced_report
     processing_result >> final_enhanced_report
-    features_matrix >> final_enhanced_report

@@ -25,6 +25,9 @@ xgboost
 
 # NUEVAS DEPENDENCIAS para el DAG mejorado:
 
+# Para Google Trends - NUEVO
+pytrends>=4.9.0
+
 # Para manejo avanzado de fechas y períodos
 pandas-datareader>=0.10.0  # APIs financieras opcionales
 

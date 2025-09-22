@@ -213,3 +213,11 @@ output_config:
     - "evento_importante"
     - "turistas_crecimiento"
 
+# Nueva sección: Google Trends
+google_trends:
+  enabled: true
+  search_term: "Mendoza"
+  geo: "AR"  # Argentina
+  min_bytes: 1000
+  description: "Interés de búsqueda en Google para 'Mendoza' en Argentina"
+

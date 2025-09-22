@@ -109,6 +109,28 @@ def build_enhanced_download_specs(cfg: dict) -> List[Dict[str, Any]]:
         })
         logger.info("✅ DolarAPI USD spec configurado")
     
+    # 3. Google Trends para "Mendoza"
+    google_trends_config = cfg.get("google_trends", {})
+    if google_trends_config and google_trends_config.get("enabled", True):
+        # Construir URL dinámica con fecha actual
+        fecha_actual = datetime.now().strftime('%Y-%m-%d')
+        trends_url = f"https://trends.google.es/trends/explore?date=2018-01-01%20{fecha_actual}&geo=AR&q=Mendoza&hl=es"
+        
+        specs.append({
+            "src": "google_trends",
+            "name": "mendoza_google_trends_interest.csv",
+            "url": trends_url,
+            "type": "google_trends_csv",
+            "min_bytes": google_trends_config.get("min_bytes", 1000),
+            "description": "Interés de búsqueda 'Mendoza' en Google Trends (Argentina)",
+            "category": "trends",
+            "search_term": "Mendoza",
+            "geo": "AR",
+            "date_from": "2018-01-01",
+            "date_to": fecha_actual
+        })
+        logger.info("✅ Google Trends Mendoza spec configurado")
+    
     logger.info(f"📋 Total especificaciones generadas: {len(specs)}")
     return specs
 
@@ -1163,14 +1185,240 @@ def process_usd_to_quarterly_averages(
         return {"status": "error", "error": str(e)}
 
 @task
+def download_google_trends_csv(
+    spec: Dict[str, Any],
+    directories: Dict[str, str]
+) -> Dict[str, Any]:
+    """Descarga datos de Google Trends para el término 'Mendoza' desde 2018."""
+    try:
+        src = spec["src"]
+        name = spec["name"] 
+        search_term = spec.get("search_term", "Mendoza")
+        geo = spec.get("geo", "AR")
+        date_from = spec.get("date_from", "2018-01-01")
+        date_to = spec.get("date_to", datetime.now().strftime('%Y-%m-%d'))
+        category = spec.get("category", "trends")
+        
+        raw_dir = Path(directories["raw"]) / category
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = raw_dir / name
+        
+        logger.info(f"📈 Descargando Google Trends para '{search_term}' desde {date_from} hasta {date_to}")
+        
+        try:
+            # Importar pytrends si está disponible
+            from pytrends.request import TrendReq
+            
+            # Configurar pytrends
+            pytrends = TrendReq(hl='es', tz=360)
+            
+            # Construir timeframe para pytrends (formato: YYYY-MM-DD YYYY-MM-DD)
+            timeframe = f"{date_from} {date_to}"
+            
+            # Realizar búsqueda
+            logger.info(f"🔍 Buscando tendencia para: {search_term} en {geo} durante {timeframe}")
+            pytrends.build_payload([search_term], cat=0, timeframe=timeframe, geo=geo, gprop='')
+            
+            # Obtener datos de interés a lo largo del tiempo
+            interest_over_time_df = pytrends.interest_over_time()
+            
+            if interest_over_time_df.empty:
+                logger.error(f"❌ No se obtuvieron datos de Google Trends para {search_term}")
+                return {
+                    "src": src, "name": name, "path": "", "size": 0, 
+                    "status": "error", "error": "No data from Google Trends",
+                    "category": category
+                }
+            
+            # Limpiar datos (remover columna 'isPartial' si existe)
+            if 'isPartial' in interest_over_time_df.columns:
+                interest_over_time_df = interest_over_time_df.drop(columns=['isPartial'])
+            
+            # Renombrar columna de interés
+            if search_term in interest_over_time_df.columns:
+                interest_over_time_df = interest_over_time_df.rename(columns={search_term: 'interes_google'})
+            
+            # Resetear índice para tener fecha como columna
+            interest_over_time_df = interest_over_time_df.reset_index()
+            
+            # Asegurar que la columna de fecha se llame 'fecha'
+            if 'date' in interest_over_time_df.columns:
+                interest_over_time_df = interest_over_time_df.rename(columns={'date': 'fecha'})
+            
+            # Guardar CSV
+            interest_over_time_df.to_csv(dest_path, index=False, encoding='utf-8')
+            
+            file_size = dest_path.stat().st_size
+            
+            logger.info(f"✅ Google Trends descargado: {len(interest_over_time_df)} registros mensuales")
+            logger.info(f"📊 Rango de interés: {interest_over_time_df['interes_google'].min()} - {interest_over_time_df['interes_google'].max()}")
+            logger.info(f"📅 Período: {interest_over_time_df['fecha'].min()} - {interest_over_time_df['fecha'].max()}")
+            
+            return {
+                "src": src, "name": name, "path": str(dest_path),
+                "size": file_size, "status": "downloaded", 
+                "description": spec["description"], "category": category,
+                "records_count": len(interest_over_time_df),
+                "search_term": search_term,
+                "date_range": f"{interest_over_time_df['fecha'].min()} - {interest_over_time_df['fecha'].max()}"
+            }
+            
+        except ImportError:
+            logger.error("❌ pytrends no está instalado. Intentando descarga manual desde URL.")
+            
+            # Fallback: intentar descarga directa (aunque Google Trends no suele permitir esto)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
+            
+            # NOTA: Esta URL probablemente no funcionará directamente
+            # Google Trends requiere autenticación y tokens
+            fallback_url = spec.get("url", "")
+            
+            logger.warning("⚠️ Método de fallback no recomendado. Instalar pytrends para funcionalidad completa.")
+            return {
+                "src": src, "name": name, "path": "", "size": 0,
+                "status": "error", "error": "pytrends not available and fallback not implemented",
+                "category": category, "recommendation": "pip install pytrends"
+            }
+            
+    except Exception as e:
+        logger.error(f"❌ Error descargando Google Trends: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {
+            "src": spec.get("src", "unknown"),
+            "name": spec.get("name", "unknown"),
+            "path": "", "size": 0, "status": "error",
+            "error": str(e)[:200], "category": spec.get("category", "unknown")
+        }
+
+@task(execution_timeout=timedelta(minutes=10))
+def process_google_trends_to_quarterly(
+    trends_data: dict,
+    directories: dict
+) -> dict:
+    """
+    Procesa datos mensuales de Google Trends a promedios trimestrales.
+    """
+    try:
+        if trends_data.get("status") != "downloaded":
+            logger.error("No se puede procesar Google Trends: descarga fallida")
+            return {"status": "error", "error": "Trends download failed"}
+        
+        trends_path = trends_data["path"]
+        
+        if not Path(trends_path).exists():
+            logger.error(f"Archivo de Google Trends no existe: {trends_path}")
+            return {"status": "error", "error": "Trends file not found"}
+        
+        # Leer datos de Google Trends
+        df_trends = pd.read_csv(trends_path)
+        
+        logger.info(f"📈 Procesando Google Trends: {len(df_trends)} registros mensuales")
+        logger.info(f"📋 Columnas disponibles: {list(df_trends.columns)}")
+        
+        # Buscar columnas de fecha e interés
+        fecha_col = None
+        interes_col = None
+        
+        for col in df_trends.columns:
+            if col.lower() in ['fecha', 'date', 'time', 'timestamp']:
+                fecha_col = col
+                break
+        
+        for col in df_trends.columns:
+            if 'interes' in col.lower() or 'interest' in col.lower() or col == 'Mendoza':
+                interes_col = col
+                break
+        
+        if not fecha_col:
+            logger.error(f"❌ No se encontró columna de fecha. Columnas: {list(df_trends.columns)}")
+            return {"status": "error", "error": "Date column not found"}
+        
+        if not interes_col:
+            logger.error(f"❌ No se encontró columna de interés. Columnas: {list(df_trends.columns)}")
+            return {"status": "error", "error": "Interest column not found"}
+        
+        logger.info(f"✅ Usando columnas - Fecha: '{fecha_col}', Interés: '{interes_col}'")
+        
+        # Procesar fechas
+        df_trends["fecha"] = pd.to_datetime(df_trends[fecha_col], errors="coerce")
+        df_trends = df_trends[df_trends["fecha"].notna()]
+        df_trends = df_trends[df_trends["fecha"] >= "2018-01-01"]
+        
+        # Asegurar que el interés sea numérico
+        df_trends["interes_google"] = pd.to_numeric(df_trends[interes_col], errors="coerce")
+        df_trends = df_trends[df_trends["interes_google"].notna()]
+        
+        logger.info(f"📅 Datos después de limpieza: {len(df_trends)} registros")
+        logger.info(f"📊 Rango de interés: {df_trends['interes_google'].min()} - {df_trends['interes_google'].max()}")
+        
+        # Crear índice trimestral
+        df_trends["anio_trimestre"] = (
+            df_trends["fecha"].dt.year.astype(str) + "Q" + 
+            df_trends["fecha"].dt.quarter.astype(str)
+        )
+        
+        # Agregación trimestral
+        df_quarterly = df_trends.groupby("anio_trimestre").agg(
+            interes_google_promedio=("interes_google", "mean"),
+            interes_google_max=("interes_google", "max"),
+            interes_google_min=("interes_google", "min"),
+            meses_con_datos=("interes_google", "count")
+        ).reset_index()
+        
+        # Renombrar columna para merge
+        df_quarterly = df_quarterly.rename(columns={"anio_trimestre": "indice_tiempo"})
+        
+        # Redondear valores
+        df_quarterly["interes_google_promedio"] = df_quarterly["interes_google_promedio"].round(1)
+        
+        # Crear variable de alto interés (por encima de la mediana)
+        mediana_interes = df_quarterly["interes_google_promedio"].median()
+        df_quarterly["interes_alto"] = (df_quarterly["interes_google_promedio"] > mediana_interes).astype(int)
+        
+        # Guardar CSV procesado
+        processed_dir = Path(directories["processed"]) / "trends"
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        trends_quarterly_path = processed_dir / "google_trends_mendoza_quarterly.csv"
+        df_quarterly.to_csv(trends_quarterly_path, index=False, encoding="utf-8")
+        
+        logger.info(f"✅ Google Trends trimestral procesado: {len(df_quarterly)} trimestres")
+        logger.info(f"📊 Rango temporal: {df_quarterly['indice_tiempo'].min()} - {df_quarterly['indice_tiempo'].max()}")
+        logger.info(f"📈 Interés promedio general: {df_quarterly['interes_google_promedio'].mean():.1f}")
+        logger.info(f"🎯 Mediana de interés: {mediana_interes:.1f}")
+        
+        return {
+            "status": "processed",
+            "quarterly_path": str(trends_quarterly_path),
+            "records": len(df_quarterly),
+            "date_range": f"{df_quarterly['indice_tiempo'].min()} - {df_quarterly['indice_tiempo'].max()}",
+            "avg_interest": round(df_quarterly['interes_google_promedio'].mean(), 1),
+            "median_interest": round(mediana_interes, 1)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error procesando Google Trends trimestral: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return {"status": "error", "error": str(e)}
+
+@task
 def create_final_mendoza_dataset(
     processing_summary: Dict[str, Any],
     usd_quarterly: Dict[str, Any],
+    trends_quarterly: Dict[str, Any],  # Nuevo parámetro
     directories: Dict[str, str]
 ) -> str:
-    """Crea dataset final trimestral con USD sincronizado."""
+    """Crea dataset final trimestral con USD y Google Trends sincronizados."""
     try:
-        logger.info("🎯 Creando dataset final con USD desde argentinadatos.com...")
+        logger.info("🎯 Creando dataset final con USD y Google Trends...")
 
         processed_files = processing_summary.get("processed_files", {})
         turismo_files = processed_files.get("turismo", [])
@@ -1361,6 +1609,59 @@ def create_final_mendoza_dataset(
             df_final["precio_promedio_usd"] = None
             df_final['usd_alto'] = None
 
+        # NUEVO: Merge con datos de Google Trends
+        if trends_quarterly.get("status") == "processed":
+            logger.info("📈 Mergeando con datos de Google Trends trimestrales...")
+            
+            trends_path = trends_quarterly["quarterly_path"]
+            logger.info(f"📁 Leyendo Google Trends desde: {trends_path}")
+            
+            if not Path(trends_path).exists():
+                logger.error(f"❌ Archivo Google Trends no existe: {trends_path}")
+                df_final["interes_google_promedio"] = None
+                df_final["interes_alto"] = None
+            else:
+                df_trends = pd.read_csv(trends_path)
+                
+                logger.info(f"📊 Datos Google Trends leídos: {len(df_trends)} trimestres")
+                logger.info(f"📋 Columnas Google Trends: {list(df_trends.columns)}")
+                logger.info(f"🔍 Muestra índice_tiempo Trends: {sorted(df_trends['indice_tiempo'].unique())[:5]}")
+                logger.info(f"📈 Muestra interés: {df_trends['interes_google_promedio'].head().tolist()}")
+                
+                # Asegurar que ambos índices sean string para el merge
+                df_final['indice_tiempo'] = df_final['indice_tiempo'].astype(str)
+                df_trends['indice_tiempo'] = df_trends['indice_tiempo'].astype(str)
+                
+                # Realizar merge con Google Trends
+                df_final_before_trends = df_final.copy()
+                df_final = df_final.merge(
+                    df_trends[['indice_tiempo', 'interes_google_promedio', 'interes_alto']], 
+                    on="indice_tiempo", 
+                    how="left"
+                )
+                
+                # Verificar resultado del merge
+                trends_matches = df_final['interes_google_promedio'].notna().sum()
+                total_rows = len(df_final)
+                
+                logger.info(f"✅ Merge Google Trends completado: {trends_matches}/{total_rows} trimestres con datos de interés")
+                
+                if trends_matches == 0:
+                    logger.error("❌ PROBLEMA: Ningún registro de Google Trends se mergeó correctamente")
+                    logger.info("🔍 Diagnóstico del merge Google Trends:")
+                    logger.info(f"   - Índices únicos turismo: {sorted(df_final_before_trends['indice_tiempo'].unique())}")
+                    logger.info(f"   - Índices únicos Trends: {sorted(df_trends['indice_tiempo'].unique())}")
+                    
+                    common_indices = set(df_final_before_trends['indice_tiempo'].unique()) & set(df_trends['indice_tiempo'].unique())
+                    logger.info(f"   - Índices en común: {sorted(common_indices)}")
+                else:
+                    logger.info(f"✅ MERGE GOOGLE TRENDS EXITOSO: {trends_matches} trimestres con datos de interés sincronizados")
+        
+        else:
+            logger.warning("⚠️ No hay datos de Google Trends procesados disponibles")
+            df_final["interes_google_promedio"] = None
+            df_final["interes_alto"] = None
+
         # Agregar variables temporales y eventos
         def extraer_año_trimestre(indice_tiempo):
             if isinstance(indice_tiempo, str) and "Q" in indice_tiempo:
@@ -1396,15 +1697,22 @@ def create_final_mendoza_dataset(
         df_final = df_final.sort_values('indice_tiempo')
 
         # DEBUG: Verificar contenido final antes de guardar
-        logger.info("🔍 VERIFICACIÓN FINAL DEL DATASET:")
+        logger.info("🔍 VERIFICACIÓN FINAL DEL DATASET CON GOOGLE TRENDS:")
         logger.info(f"   - Total filas: {len(df_final)}")
         logger.info(f"   - Columnas: {list(df_final.columns)}")
+        
+        # Verificar USD
         if 'precio_promedio_usd' in df_final.columns:
             usd_not_null = df_final['precio_promedio_usd'].notna().sum()
             logger.info(f"   - Datos USD no nulos: {usd_not_null}/{len(df_final)}")
-            if usd_not_null > 0:
-                logger.info(f"   - Rango USD: ${df_final['precio_promedio_usd'].min():.2f} - ${df_final['precio_promedio_usd'].max():.2f}")
-                logger.info(f"   - Muestra USD: {df_final[['indice_tiempo', 'precio_promedio_usd']].head()}")
+        
+        # Verificar Google Trends
+        if 'interes_google_promedio' in df_final.columns:
+            trends_not_null = df_final['interes_google_promedio'].notna().sum()
+            logger.info(f"   - Datos Google Trends no nulos: {trends_not_null}/{len(df_final)}")
+            if trends_not_null > 0:
+                logger.info(f"   - Rango interés Google: {df_final['interes_google_promedio'].min():.1f} - {df_final['interes_google_promedio'].max():.1f}")
+                logger.info(f"   - Muestra Google Trends: {df_final[['indice_tiempo', 'interes_google_promedio']].head()}")
 
         # Guardar archivo final
         local_data_dir = Path("/usr/local/airflow/data/raw")
@@ -1428,7 +1736,7 @@ def create_final_mendoza_dataset(
         else:
             logger.error(f"❌ Error: archivo no se guardó en {output_path}")
 
-        # Crear resumen del dataset final - CONVERTIR NUMPY TYPES A PYTHON NATIVES
+        # Crear resumen del dataset final - ACTUALIZADO CON GOOGLE TRENDS
         def convert_numpy_types(obj):
             """Convierte tipos numpy a tipos Python nativos para JSON serialization"""
             if isinstance(obj, (pd.Int64Dtype, pd.Float64Dtype)):
@@ -1458,12 +1766,18 @@ def create_final_mendoza_dataset(
                 "usd_quarters_coverage": f"{int(df_final['precio_promedio_usd'].notna().sum())}/{int(len(df_final))}" if 'precio_promedio_usd' in df_final else "0/0",
                 "usd_data_found": int(df_final['precio_promedio_usd'].notna().sum()) if 'precio_promedio_usd' in df_final else 0
             },
+            "google_trends_summary": {
+                "has_trends_data": trends_quarterly.get("status") == "processed",
+                "avg_interest": float(df_final['interes_google_promedio'].mean()) if 'interes_google_promedio' in df_final and df_final['interes_google_promedio'].notna().any() else None,
+                "trends_quarters_coverage": f"{int(df_final['interes_google_promedio'].notna().sum())}/{int(len(df_final))}" if 'interes_google_promedio' in df_final else "0/0",
+                "trends_data_found": int(df_final['interes_google_promedio'].notna().sum()) if 'interes_google_promedio' in df_final else 0
+            },
             "features_available": list(df_final.columns),
             "ready_for_modeling": True,
             "recommended_target": "turistas_no_residentes_total",
             "key_predictors": [
-                "precio_promedio_usd", "temporada_alta", 
-                "temporada_vendimia", "año"
+                "precio_promedio_usd", "interes_google_promedio", "temporada_alta", 
+                "temporada_vendimia", "año", "interes_alto"
             ]
         }
 
@@ -1475,27 +1789,32 @@ def create_final_mendoza_dataset(
             json.dump(summary, f, indent=2, ensure_ascii=False)
 
         logger.info("=" * 70)
-        logger.info("📊 DATASET FINAL CREADO CON ÉXITO")
+        logger.info("📊 DATASET FINAL CREADO CON ÉXITO (USD + GOOGLE TRENDS)")
         logger.info("=" * 70)
         logger.info(f"📁 Archivo: {output_path}")
         logger.info(f"📅 Trimestres: {len(df_final)}")
         logger.info(f"🗓️ Rango: {summary['date_range']}")
         logger.info(f"🎯 Variables: {len(df_final.columns)}")
         logger.info(f"💰 Datos USD: {'SÍ' if summary['usd_data_summary']['has_usd_data'] else 'NO'}")
+        logger.info(f"📈 Datos Google Trends: {'SÍ' if summary['google_trends_summary']['has_trends_data'] else 'NO'}")
         
         if summary['usd_data_summary']['has_usd_data']:
             if summary['usd_data_summary']['avg_usd_price'] is not None:
                 logger.info(f"💵 Precio USD promedio: ${summary['usd_data_summary']['avg_usd_price']:.2f}")
             logger.info(f"📊 Cobertura USD: {summary['usd_data_summary']['usd_quarters_coverage']}")
-            logger.info(f"🔢 Registros USD encontrados: {summary['usd_data_summary']['usd_data_found']}")
         
-        logger.info("✅ LISTO PARA MODELADO PREDICTIVO")
+        if summary['google_trends_summary']['has_trends_data']:
+            if summary['google_trends_summary']['avg_interest'] is not None:
+                logger.info(f"📈 Interés Google promedio: {summary['google_trends_summary']['avg_interest']:.1f}")
+            logger.info(f"📊 Cobertura Google Trends: {summary['google_trends_summary']['trends_quarters_coverage']}")
+        
+        logger.info("✅ LISTO PARA MODELADO PREDICTIVO AVANZADO")
         logger.info("=" * 70)
 
         return str(output_path)
 
     except Exception as e:
-        logger.error(f"❌ Error creando dataset final con USD: {e}")
+        logger.error(f"❌ Error creando dataset final con USD y Google Trends: {e}")
         import traceback
         logger.error(f"Traceback completo: {traceback.format_exc()}")
         return ""
@@ -1505,27 +1824,28 @@ def create_final_mendoza_dataset(
 with DAG(
     dag_id="mza_turismo_etl_enhanced",
     default_args=default_args,
-    description="Pipeline ETL Mejorado - Predicción Demanda Hotelera Mendoza con USD desde argentinadatos.com",
+    description="Pipeline ETL Mejorado - Predicción Demanda Hotelera Mendoza con USD y Google Trends",
     schedule="@monthly",
     start_date=datetime(2024, 8, 1),
     catchup=False,
     max_active_runs=1,
     max_active_tasks=10,
-    tags=["mendoza", "turismo", "economia", "usd", "argentinadatos", "enhanced", "v2.3"],
+    tags=["mendoza", "turismo", "economia", "usd", "google-trends", "enhanced", "v2.4"],
     doc_md="""
-    ## Pipeline ETL Mejorado - Demanda Hotelera Mendoza v2.3
+    ## Pipeline ETL Mejorado - Demanda Hotelera Mendoza v2.4
     
-    **FUNCIONALIDAD**: Datos USD históricos desde argentinadatos.com API
+    **NUEVA FUNCIONALIDAD**: Google Trends para interés en búsquedas de "Mendoza"
     
     ### Fuentes de datos principales:
     - **Turismo**: ETI Mendoza (aeropuerto + Cristo Redentor)
     - **USD**: argentinadatos.com (datos diarios históricos oficiales)
+    - **Google Trends**: Interés de búsqueda "Mendoza" mensual (agregado trimestral)
     - **Variables temporales**: Estacionales, eventos
     
     ### Salida optimizada:
-    - Dataset final con USD sincronizado por trimestre
-    - Variables lag y de crecimiento
-    - Listo para modelos de serie temporal avanzados
+    - Dataset final con USD y Google Trends sincronizados por trimestre
+    - Variables de alto interés de búsqueda y precio
+    - Listo para modelos de serie temporal con factores externos
     """,
 ) as dag:
     # 1. Preparación expandida
@@ -1534,6 +1854,7 @@ with DAG(
     # 2. Descarga de datos tradicionales
     csv_downloads = []
     api_downloads = []
+    trends_downloads = []
     
     for spec in DOWNLOAD_SPECS:
         tipo = spec.get("type", "")
@@ -1543,9 +1864,12 @@ with DAG(
         elif tipo == "api_json":
             api_task = download_api_json(spec=spec, directories=dirs)
             api_downloads.append(api_task)
+        elif tipo == "google_trends_csv":
+            trends_task = download_google_trends_csv(spec=spec, directories=dirs)
+            trends_downloads.append(trends_task)
 
-    # Combinar todas las descargas
-    all_downloads = csv_downloads + api_downloads
+    # Combinar todas las descargas tradicionales
+    all_downloads = csv_downloads + api_downloads + trends_downloads
 
     # 3. Descarga USD desde argentinadatos.com
     usd_historical = download_usd_historical_dolarapi(directories=dirs)
@@ -1556,56 +1880,75 @@ with DAG(
         directories=dirs
     )
 
-    # 5. Procesamiento tradicional
+    # 5. Procesar Google Trends (solo si hay descargas de trends)
+    if trends_downloads:
+        # Tomar el primer (y único) resultado de Google Trends
+        trends_quarterly = process_google_trends_to_quarterly(
+            trends_data=trends_downloads[0],
+            directories=dirs
+        )
+    else:
+        # Crear tarea dummy que retorna status error
+        @task
+        def no_trends_available():
+            return {"status": "error", "error": "No Google Trends configured"}
+        
+        trends_quarterly = no_trends_available()
+
+    # 6. Procesamiento tradicional
     processing_result = process_and_standardize_data(
         all_downloads=all_downloads,
         directories=dirs
     )
 
-    # 6. Dataset final MEJORADO con USD sincronizado
-    final_dataset_with_usd = create_final_mendoza_dataset(
+    # 7. Dataset final MEJORADO con USD y Google Trends sincronizados
+    final_dataset_enhanced = create_final_mendoza_dataset(
         processing_summary=processing_result,
         usd_quarterly=usd_quarterly,
+        trends_quarterly=trends_quarterly,  # Nuevo parámetro
         directories=dirs
     )
 
-    # 7. Validación de datos
+    # 8. Validación de datos
     enhanced_validation = validate_enhanced_data(
         all_downloads=all_downloads,
         processing_summary=processing_result,
         directories=dirs
     )
 
-    # 8. Reporte final
+    # 9. Reporte final
     final_enhanced_report = generate_enhanced_pipeline_report(
         validation_results=enhanced_validation,
         processing_summary=processing_result,
         directories=dirs
     )
 
-    # Dependencias del pipeline - SIMPLIFICADAS
+    # Dependencias del pipeline - ACTUALIZADAS CON GOOGLE TRENDS
     # Primero los directorios
     dirs >> usd_historical
     
-    # Dependencias de descarga de CSV y API
-    for download_task in csv_downloads:
-        dirs >> download_task
-    for download_task in api_downloads:
+    # Dependencias de descarga
+    for download_task in csv_downloads + api_downloads + trends_downloads:
         dirs >> download_task
     
     # USD processing
     usd_historical >> usd_quarterly
     
+    # Google Trends processing (solo si hay trends_downloads)
+    if trends_downloads:
+        trends_downloads[0] >> trends_quarterly
+    
     # Processing depende de todas las descargas completadas
-    for download_task in csv_downloads + api_downloads:
+    for download_task in csv_downloads + api_downloads + trends_downloads:
         download_task >> processing_result
     
-    # Dataset final depende de processing y USD
-    processing_result >> final_dataset_with_usd
-    usd_quarterly >> final_dataset_with_usd
+    # Dataset final depende de processing, USD y Trends
+    processing_result >> final_dataset_enhanced
+    usd_quarterly >> final_dataset_enhanced
+    trends_quarterly >> final_dataset_enhanced
     
     # Validation depende de todas las descargas y processing
-    for download_task in csv_downloads + api_downloads:
+    for download_task in csv_downloads + api_downloads + trends_downloads:
         download_task >> enhanced_validation
     processing_result >> enhanced_validation
     

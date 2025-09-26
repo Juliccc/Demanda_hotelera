@@ -1,7 +1,7 @@
-# requirements.txt - Actualizado para DAG mejorado
+# requirements.txt - Actualizado para DAG mensual v3.0
 
 # Core data processing (mantener existente)
-pandas
+pandas>=1.5.0
 pyyaml
 requests
 certifi
@@ -23,39 +23,36 @@ scikit-learn
 statsmodels
 xgboost
 
-# NUEVAS DEPENDENCIAS para el DAG mejorado:
-
-# Para Google Trends - NUEVO
+# Para Google Trends - REQUERIDO para datos mensuales
 pytrends>=4.9.0
 
-# Para manejo avanzado de fechas y períodos
-pandas-datareader>=0.10.0  # APIs financieras opcionales
+# Para manejo avanzado de fechas y períodos MENSUAL
+pandas-datareader>=0.10.0
 
 # Para validación de esquemas JSON mejorada
 cerberus>=1.3.4
 
-# Para logging estructurado (opcional pero recomendado)
+# Para logging estructurado
 structlog>=22.1.0
 
-# Para manejo de timezone (importante para datos temporales)
+# Para manejo de timezone (importante para datos temporales MENSUAL)
 pytz>=2022.1
 
-# Para requests más robustos
-requests-cache>=0.9.0  # Cache de requests para APIs
-tenacity>=8.0.0        # Retry automático para APIs
+# Para requests más robustos con datos ETI múltiples
+requests-cache>=0.9.0
+tenacity>=8.0.0
 
-# Para procesamiento de series temporales
+# Para procesamiento de series temporales MENSUALES
 # prophet  # Mantener comentado por ahora
 
 # Utilidades adicionales (mantener)
 pathlib
 
-# OPCIONALES (comentar si causan problemas):
-# Para análisis exploratorio futuro
+# OPCIONALES para análisis futuro
 # matplotlib>=3.5.0
 # seaborn>=0.11.0
 
-# Para streamlit (Cuarta Entrega)
+# Para streamlit (Cuarta Entrega) - compatible con datos mensuales
 # streamlit>=1.25.0
 # plotly>=5.15.0
 # altair>=5.0.0

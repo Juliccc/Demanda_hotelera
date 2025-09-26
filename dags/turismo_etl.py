@@ -57,42 +57,35 @@ def load_config() -> dict:
         raise AirflowException(f"Configuration load failed: {e}")
 
 def build_enhanced_download_specs(cfg: dict) -> List[Dict[str, Any]]:
-    """Construye especificaciones expandidas incluyendo nuevas fuentes."""
+    """Construye especificaciones expandidas incluyendo TODAS las nuevas fuentes ETI."""
     specs = []
     defaults = cfg.get("defaults", {})
     
-    # 1. Fuentes turísticas originales
-    # ETI aeropuerto
-    eti_aeropuerto_config = cfg.get("eti_aeropuerto", {})
-    if eti_aeropuerto_config:
-        api_url = eti_aeropuerto_config.get("api_url")
-        if api_url:
-            specs.append({
-                "src": "eti_aeropuerto",
-                "name": f"{eti_aeropuerto_config.get('dataset_name', 'eti_mendoza_aeropuerto_turistas_no_residentes')}.csv",
-                "url": api_url,
-                "type": "direct_csv",
-                "min_bytes": eti_aeropuerto_config.get("min_bytes", 2000),
-                "description": "ETI Mendoza - Aeropuerto - Turistas no residentes",
-                "category": "turismo"
-            })
-            logger.info("✅ ETI Aeropuerto spec configurado")
-
-    # ETI cristo redentor
-    eti_cristo_config = cfg.get("eti_cristo_redentor", {})
-    if eti_cristo_config:
-        api_url = eti_cristo_config.get("api_url")
-        if api_url:
-            specs.append({
-                "src": "eti_cristo_redentor",
-                "name": f"{eti_cristo_config.get('dataset_name', 'eti_mendoza_cristo_redentor_turistas_no_residentes')}.csv",
-                "url": api_url,
-                "type": "direct_csv",
-                "min_bytes": eti_cristo_config.get("min_bytes", 2000),
-                "description": "ETI Mendoza - Cristo Redentor - Turistas no residentes",
-                "category": "turismo"
-            })
-            logger.info("✅ ETI Cristo Redentor spec configurado")
+    # 1. TODAS las fuentes turísticas ETI
+    eti_sources = [
+        "eti_aeropuerto",
+        "eti_cristo_redentor", 
+        "eti_ezeiza_aeroparque",
+        "eti_cordoba_aeropuerto",
+        "eti_puerto_buenos_aires"
+    ]
+    
+    for eti_source in eti_sources:
+        eti_config = cfg.get(eti_source, {})
+        if eti_config and eti_config.get("enabled", True):
+            api_url = eti_config.get("api_url")
+            if api_url:
+                specs.append({
+                    "src": eti_source,
+                    "name": f"{eti_config.get('dataset_name', eti_source)}.csv",
+                    "url": api_url,
+                    "type": "direct_csv",
+                    "min_bytes": eti_config.get("min_bytes", 2000),
+                    "description": f"ETI - {eti_source.replace('_', ' ').title()}",
+                    "category": "turismo",
+                    "frequency": eti_config.get("frequency", "trimestral")  # Importante para división
+                })
+                logger.info(f"✅ ETI {eti_source} spec configurado - {eti_config.get('frequency', 'trimestral')}")
     
     # 2. USD desde argentinadatos.com
     usd_dolarapi_config = cfg.get("usd_dolarapi", {})
@@ -114,7 +107,7 @@ def build_enhanced_download_specs(cfg: dict) -> List[Dict[str, Any]]:
     if google_trends_config and google_trends_config.get("enabled", True):
         # Construir URL dinámica con fecha actual
         fecha_actual = datetime.now().strftime('%Y-%m-%d')
-        trends_url = f"https://trends.google.es/trends/explore?date=2018-01-01%20{fecha_actual}&geo=AR&q=Mendoza&hl=es"
+        trends_url = f"https://trends.google.es/trends/explore?date=2014-01-01%20{fecha_actual}&geo=AR&q=Mendoza&hl=es"
         
         specs.append({
             "src": "google_trends",
@@ -126,7 +119,7 @@ def build_enhanced_download_specs(cfg: dict) -> List[Dict[str, Any]]:
             "category": "trends",
             "search_term": "Mendoza",
             "geo": "AR",
-            "date_from": "2018-01-01",
+            "date_from": google_trends_config.get("date_from", "2014-01-01"),
             "date_to": fecha_actual
         })
         logger.info("✅ Google Trends Mendoza spec configurado")
@@ -200,18 +193,19 @@ def download_direct_csv_enhanced(
     spec: Dict[str, Any],
     directories: Dict[str, str]
 ) -> Dict[str, Any]:
-    """Descarga CSV con categorización y validación mejorada."""
+    """Descarga CSV con categorización y validación mejorada - INCLUYE FRECUENCIA."""
     try:
         src = spec["src"]
         name = spec["name"] 
         url = spec["url"]
         min_bytes = spec["min_bytes"]
         category = spec.get("category", "general")
+        frequency = spec.get("frequency", "unknown")  # NUEVA: capturar frecuencia
         
         raw_dir = Path(directories["raw"]) / category
         dest_path = raw_dir / name
         
-        logger.info(f"📥 Descargando {spec['description']}: {name}")
+        logger.info(f"📥 Descargando {spec['description']}: {name} (Frecuencia: {frequency})")
         
         if dest_path.exists() and dest_path.stat().st_size >= min_bytes:
             size = dest_path.stat().st_size
@@ -219,7 +213,8 @@ def download_direct_csv_enhanced(
             return {
                 "src": src, "name": name, "path": str(dest_path),
                 "size": size, "status": "cached", "url": url,
-                "description": spec["description"], "category": category
+                "description": spec["description"], "category": category,
+                "frequency": frequency  # NUEVA: incluir frecuencia en resultado
             }
         
         headers = {
@@ -269,7 +264,7 @@ def download_direct_csv_enhanced(
                 dest_path.unlink()
                 raise ValueError(f"Archivo muy pequeño y no válido: {total_size} < {min_bytes} bytes")
         
-        logger.info(f"✅ Descarga exitosa: {name} - {total_size:,} bytes")
+        logger.info(f"✅ Descarga exitosa: {name} - {total_size:,} bytes - Frecuencia: {frequency}")
         
         return {
             "src": src, "name": name, "path": str(dest_path),
@@ -284,7 +279,8 @@ def download_direct_csv_enhanced(
             "name": spec.get("name", "unknown"),
             "path": "", "size": 0, "status": "error",
             "url": spec.get("url", ""), "error": str(e)[:200],
-            "category": spec.get("category", "unknown")
+            "category": spec.get("category", "unknown"),
+            "frequency": spec.get("frequency", "unknown")
         }
 
 @task(execution_timeout=timedelta(minutes=12))
@@ -535,7 +531,7 @@ def process_and_standardize_data(
     all_downloads: List[Any],
     directories: Dict[str, str]
 ) -> Dict[str, Any]:
-    """Procesa y estandariza todos los datos descargados con validaciones robustas."""
+    """Procesa y estandariza todos los datos descargados - CORREGIDO para distribuir datos trimestrales en 3 meses CON TRUNCAMIENTO."""
     try:
         files = []
         for download in all_downloads:
@@ -546,16 +542,80 @@ def process_and_standardize_data(
         
         logger.info(f"📥 Total archivos descargados: {len(files)}")
         for file_info in files:
-            logger.info(f"  📄 {file_info.get('name', 'unknown')}: {file_info.get('status', 'unknown')} - {file_info.get('category', 'unknown')}")
+            logger.info(f"  📄 {file_info.get('name', 'unknown')}: {file_info.get('status', 'unknown')} - {file_info.get('category', 'unknown')} - Freq: {file_info.get('frequency', 'N/A')}")
         
         processed_files = {
             "turismo": [],
             "economico": [], 
             "infraestructura": [],
-            "general": []
+            "general": [],
+            "trends": []  # Agregar categoría trends
         }
         
         processed_dir = Path(directories["processed"])
+        
+        def expand_quarterly_to_monthly(df, fecha_col, turistas_col, file_name):
+            """
+            Expande datos trimestrales a datos mensuales distribuyendo el valor trimestral 
+            en los 3 meses correspondientes - CON TRUNCAMIENTO A ENTEROS.
+            """
+            logger.info(f"🔄 Expandiendo datos trimestrales a mensuales para {file_name} (CON TRUNCAMIENTO)")
+            
+            # Crear DataFrame expandido
+            expanded_rows = []
+            
+            for _, row in df.iterrows():
+                fecha_trimestre = row[fecha_col]
+                turistas_original = row[turistas_col]
+                
+                # TRUNCAR a entero después de dividir por 3 (sin decimales)
+                turistas_por_mes = int(turistas_original / 3)
+                
+                logger.debug(f"📊 {file_name}: Trimestre {turistas_original} -> {turistas_por_mes} turistas/mes (truncado)")
+                
+                # Obtener año y trimestre de la fecha
+                año = fecha_trimestre.year
+                mes_inicio = fecha_trimestre.month
+                
+                # Determinar los 3 meses del trimestre basado en el mes de inicio
+                if mes_inicio in [1, 2, 3]:  # Q1
+                    meses = [1, 2, 3]
+                elif mes_inicio in [4, 5, 6]:  # Q2
+                    meses = [4, 5, 6]
+                elif mes_inicio in [7, 8, 9]:  # Q3
+                    meses = [7, 8, 9]
+                else:  # Q4
+                    meses = [10, 11, 12]
+                
+                # Crear una fila para cada mes del trimestre
+                for mes in meses:
+                    fecha_mensual = pd.Timestamp(year=año, month=mes, day=1)
+                    indice_mensual = fecha_mensual.strftime('%Y-%m')
+                    
+                    expanded_rows.append({
+                        fecha_col: fecha_mensual,
+                        turistas_col: turistas_por_mes,  # Valor ya truncado a entero
+                        'indice_tiempo': indice_mensual,
+                        'fecha_std': fecha_mensual
+                    })
+                    
+                    logger.debug(f"📅 {file_name}: {fecha_trimestre.strftime('%Y-%m')} -> {indice_mensual}: {turistas_por_mes} turistas (entero)")
+            
+            # Crear DataFrame expandido
+            df_expanded = pd.DataFrame(expanded_rows)
+            
+            # Verificar que todos los valores son enteros
+            total_original = df[turistas_col].sum()
+            total_expandido = df_expanded[turistas_col].sum()
+            
+            logger.info(f"✅ {file_name}: Expandido de {len(df)} trimestres a {len(df_expanded)} meses")
+            logger.info(f"📊 {file_name}: Total original: {total_original:.0f} -> Total expandido: {total_expandido} turistas (enteros)")
+            logger.info(f"📋 {file_name}: Verificación - Todos los valores son enteros: {df_expanded[turistas_col].dtype}")
+            
+            # Asegurar que la columna sea de tipo entero
+            df_expanded[turistas_col] = df_expanded[turistas_col].astype(int)
+            
+            return df_expanded
         
         for file_info in files:
             status = file_info.get("status", "")
@@ -572,27 +632,106 @@ def process_and_standardize_data(
                 if path.endswith(".csv"):
                     df = pd.read_csv(path, encoding='utf-8')
                     
-                    # Procesar archivos ETI
-                    if "eti" in file_info.get("name", "").lower():
+                    # Procesar archivos ETI - LÓGICA MEJORADA CON EXPANSIÓN TRIMESTRAL Y TRUNCAMIENTO
+                    if category == "turismo" and any(eti in file_info.get("src", "").lower() for eti in ["eti_", "aeropuerto", "cristo", "ezeiza", "cordoba", "puerto"]):
                         logger.info(f"📊 Procesando ETI {file_info['name']}: {len(df)} filas, columnas: {list(df.columns)}")
                         
-                        # Buscar columna de fecha
+                        # Determinar frecuencia desde la configuración
+                        frequency = file_info.get("frequency", "unknown")
+                        es_trimestral = frequency == "trimestral" or "trimes" in file_info.get("name", "").lower()
+                        
+                        logger.info(f"📅 ETI {file_info['name']} - Frecuencia detectada: {frequency} - Es trimestral: {es_trimestral}")
+                        
+                        # Buscar columna de fecha de manera más flexible
                         fecha_col = None
+                        possible_date_cols = [
+                            'fecha', 'periodo', 'residencia', 'turistas', 'no_residentes',
+                            'anio_trimestre', 'trimestre', 'año_trimestre', 'indice_tiempo_periodo', 'indice_tiempo'
+                        ]
+                        
                         for col in df.columns:
-                            if col.lower() in ['fecha', 'periodo', 'period', 'anio_trimestre', 'trimestre']:
+                            col_lower = col.lower()
+                            if any(date_keyword in col_lower for date_keyword in possible_date_cols):
                                 fecha_col = col
                                 break
                         
-                        if fecha_col:
-                            logger.info(f"✅ ETI {file_info['name']} - Columna de fecha encontrada: {fecha_col}")
-                            try:
-                                df[fecha_col] = pd.to_datetime(df[fecha_col], errors='coerce')
-                                df['indice_tiempo'] = df[fecha_col]
-                                df['fecha_std'] = df[fecha_col]
-                                logger.info(f"✅ ETI {file_info['name']} - fecha_std creada exitosamente")
-                            except Exception as e:
-                                logger.error(f"❌ ETI {file_info['name']} - Error creando fecha_std: {e}")
+                        # Buscar columna de turistas de manera más flexible
+                        turistas_col = None
+                        possible_turistas_cols = [
+                            'turistas_no_residentes', 'turistas_extranjeros', 'turistas',
+                            'visitantes_no_residentes', 'no_residentes', 'extranjeros'
+                        ]
                         
+                        for col in df.columns:
+                            col_lower = col.lower()
+                            if any(turistas_keyword in col_lower for turistas_keyword in possible_turistas_cols):
+                                turistas_col = col
+                                break
+                        
+                        # Si no encontramos columnas exactas, buscar por patrones más amplios
+                        if not fecha_col:
+                            for col in df.columns:
+                                if any(keyword in col.lower() for keyword in ['fecha', 'tiempo', 'period']):
+                                    fecha_col = col
+                                    logger.warning(f"⚠️ Usando columna de fecha aproximada: {fecha_col}")
+                                    break
+                        
+                        if not turistas_col:
+                            for col in df.columns:
+                                if 'turistas' in col.lower() or 'visitantes' in col.lower():
+                                    turistas_col = col
+                                    logger.warning(f"⚠️ Usando columna de turistas aproximada: {turistas_col}")
+                                    break
+                        
+                        if fecha_col and turistas_col:
+                            logger.info(f"✅ ETI {file_info['name']} - Columnas encontradas: fecha='{fecha_col}', turistas='{turistas_col}'")
+                            
+                            # Convertir turistas a numérico ANTES de cualquier procesamiento
+                            original_turistas = df[turistas_col].copy()
+                            df[turistas_col] = pd.to_numeric(df[turistas_col], errors='coerce').fillna(0)
+                            
+                            # ASEGURAR QUE SEAN ENTEROS desde el inicio
+                            df[turistas_col] = df[turistas_col].astype(int)
+                            
+                            logger.info(f"📊 ETI {file_info['name']} - Valores turistas originales (muestra): {original_turistas.head().tolist()}")
+                            logger.info(f"📊 ETI {file_info['name']} - Valores turistas convertidos a enteros (muestra): {df[turistas_col].head().tolist()}")
+                            logger.info(f"📊 ETI {file_info['name']} - Total turistas original: {df[turistas_col].sum()}")
+                            
+                            try:
+                                # Convertir fechas
+                                df[fecha_col] = pd.to_datetime(df[fecha_col], errors='coerce')
+                                df = df[df[fecha_col].notna()]
+                                df = df[df[fecha_col] >= '2014-01-01']  # FILTRO DESDE 2014
+                                
+                                logger.info(f"✅ ETI {file_info['name']} - Datos después de filtro fecha: {len(df)} registros válidos")
+                                
+                                # NUEVA LÓGICA: Expandir datos trimestrales a mensuales CON TRUNCAMIENTO
+                                if es_trimestral:
+                                    logger.info(f"📊 ETI {file_info['name']} - EXPANDIENDO DATOS TRIMESTRALES A MENSUALES (CON TRUNCAMIENTO)")
+                                    df = expand_quarterly_to_monthly(df, fecha_col, turistas_col, file_info['name'])
+                                else:
+                                    logger.info(f"📊 ETI {file_info['name']} - Datos mensuales, creando índice temporal")
+                                    # Para datos mensuales, también asegurar que sean enteros
+                                    df[turistas_col] = df[turistas_col].astype(int)
+                                    df['indice_tiempo'] = df[fecha_col].dt.strftime('%Y-%m')
+                                    df['fecha_std'] = df[fecha_col]
+                                
+                                # VERIFICACIÓN FINAL: Asegurar que todos los turistas sean enteros
+                                df[turistas_col] = df[turistas_col].astype(int)
+                                
+                                logger.info(f"✅ ETI {file_info['name']} - Procesamiento completado: {len(df)} registros mensuales")
+                                logger.info(f"📊 ETI {file_info['name']} - Total turistas final (enteros): {df[turistas_col].sum()}")
+                                logger.info(f"📅 ETI {file_info['name']} - Rango temporal: {df['indice_tiempo'].min()} - {df['indice_tiempo'].max()}")
+                                logger.info(f"📋 ETI {file_info['name']} - Tipo de datos turistas: {df[turistas_col].dtype}")
+                                
+                            except Exception as e:
+                                logger.error(f"❌ ETI {file_info['name']} - Error procesando fechas: {e}")
+                                continue
+                        else:
+                            logger.error(f"❌ ETI {file_info['name']} - Columnas no encontradas. Fecha: {fecha_col}, Turistas: {turistas_col}")
+                            logger.error(f"📋 Columnas disponibles: {list(df.columns)}")
+                            continue
+                
                 elif path.endswith(".json"):
                     with open(path, 'r', encoding='utf-8') as f:
                         json_data = json.load(f)
@@ -626,17 +765,17 @@ def process_and_standardize_data(
                     logger.warning(f"DataFrame vacío generado para {file_info['name']}")
                     continue
                 
-                # Filtrar datos desde 2018 en adelante
+                # Filtrar datos desde 2014 en adelante
                 if 'fecha_std' in df.columns:
                     original_rows = len(df)
                     valid_dates = df['fecha_std'].notna().sum()
                     logger.info(f"📅 {file_info['name']} - Fechas válidas: {valid_dates}/{original_rows}")
                     
                     if valid_dates > 0:
-                        df = df[df['fecha_std'] >= '2018-01-01']
+                        df = df[df['fecha_std'] >= '2014-01-01']  # FILTRO DESDE 2014
                         filtered_rows = len(df)
                         if original_rows != filtered_rows:
-                            logger.info(f"📅 Filtro 2018+: {original_rows} -> {filtered_rows} registros en {file_info['name']}")
+                            logger.info(f"📅 Filtro 2014+: {original_rows} -> {filtered_rows} registros en {file_info['name']}")
                 
                 # Verificar que aún tengamos datos después de filtros
                 if df.empty:
@@ -655,22 +794,33 @@ def process_and_standardize_data(
                     "has_date_column": 'fecha_std' in df.columns,
                     "date_range": f"{df['fecha_std'].min()} - {df['fecha_std'].max()}" if 'fecha_std' in df.columns else "N/A",
                     "original_status": file_info.get("status", "unknown"),
-                    "data_source": file_info.get("src", "unknown")
+                    "data_source": file_info.get("src", "unknown"),
+                    "frequency": file_info.get("frequency", "unknown"),
+                    "was_quarterly_expanded": file_info.get("frequency") == "trimestral" and category == "turismo",
+                    "integers_enforced": category == "turismo"  # NUEVA: indicar que se forzaron enteros
                 })
                 
-                logger.info(f"✅ Procesado {category}/{file_info['name']}: {len(df)} filas, {len(df.columns)} columnas")
+                logger.info(f"✅ Procesado {category}/{file_info['name']}: {len(df)} filas, {len(df.columns)} columnas - Freq: {file_info.get('frequency', 'N/A')}")
                 
             except Exception as e:
                 logger.error(f"❌ Error procesando {file_info['name']}: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 continue
         
-        # Resumen de procesamiento
+        # Resumen mejorado con información de expansión trimestral e enteros
         summary = {
             "timestamp": datetime.now().isoformat(),
             "files_by_category": {cat: len(files) for cat, files in processed_files.items()},
             "total_processed": sum(len(files) for files in processed_files.values()),
             "processed_files": processed_files,
-            "success": True
+            "success": True,
+            "quarterly_files_expanded": sum(1 for cat_files in processed_files.values() 
+                                          for file_info in cat_files 
+                                          if file_info.get("was_quarterly_expanded", False)),
+            "integer_enforcement_applied": sum(1 for cat_files in processed_files.values()
+                                             for file_info in cat_files
+                                             if file_info.get("integers_enforced", False))
         }
         
         # Guardar resumen
@@ -679,6 +829,8 @@ def process_and_standardize_data(
             json.dump(summary, f, indent=2, ensure_ascii=False)
         
         logger.info(f"📊 Procesamiento completado: {summary['total_processed']} archivos")
+        logger.info(f"📊 Archivos trimestrales expandidos a mensuales: {summary['quarterly_files_expanded']}")
+        logger.info(f"📊 Archivos con enteros forzados (turistas): {summary['integer_enforcement_applied']}")
         
         return summary
         
@@ -712,7 +864,8 @@ def validate_enhanced_data(
                 "turismo": {"files": 0, "status": "unknown"},
                 "economico": {"files": 0, "status": "unknown"}, 
                 "infraestructura": {"files": 0, "status": "unknown"},
-                "general": {"files": 0, "status": "unknown"}
+                "general": {"files": 0, "status": "unknown"},
+                "trends": {"files": 0, "status": "unknown"}  # AGREGAR CATEGORÍA TRENDS
             }
         }
         
@@ -976,14 +1129,14 @@ def download_usd_historical_dolarapi(directories: dict) -> dict:
     """
     Descarga datos históricos del dólar desde 
     https://api.argentinadatos.com/v1/cotizaciones/dolares/
-    y filtra por dólar oficial desde 2018-01-01 hasta la fecha actual.
+    y filtra por dólar oficial desde 2014-01-01 hasta la fecha actual.
     """
     try:
         # Nueva URL que devuelve todo el histórico
         url = "https://api.argentinadatos.com/v1/cotizaciones/dolares/"
         
         headers = {
-            "User-Agent": "TurismoDataPipeline/2.0",
+            "User-Agent": "TurismoDataPipeline/3.0",
             "Accept": "application/json"
         }
         
@@ -1005,8 +1158,8 @@ def download_usd_historical_dolarapi(directories: dict) -> dict:
         
         logger.info(f"📊 Datos totales recibidos: {len(data)} registros")
         
-        # Filtrar por dólar oficial y fecha desde 2018-01-01
-        fecha_inicio = datetime(2018, 1, 1)
+        # Filtrar por dólar oficial y fecha desde 2014-01-01 (CAMBIO)
+        fecha_inicio = datetime(2014, 1, 1)  # NUEVA FECHA INICIO
         fecha_actual = datetime.now()
         
         datos_filtrados = []
@@ -1026,7 +1179,7 @@ def download_usd_historical_dolarapi(directories: dict) -> dict:
                 # Parsear fecha (formato: YYYY-MM-DD)
                 fecha = datetime.strptime(fecha_str, '%Y-%m-%d')
                 
-                # Filtrar por rango de fechas
+                # Filtrar por rango de fechas desde 2014
                 if fecha >= fecha_inicio and fecha <= fecha_actual:
                     datos_filtrados.append(record)
             except ValueError:
@@ -1039,10 +1192,10 @@ def download_usd_historical_dolarapi(directories: dict) -> dict:
                     continue
         
         if len(datos_filtrados) == 0:
-            logger.error("❌ No se encontraron datos del dólar oficial desde 2018-01-01")
+            logger.error("❌ No se encontraron datos del dólar oficial desde 2014-01-01")
             return {"status": "error", "error": "No hay datos del dólar oficial en el rango de fechas"}
         
-        logger.info(f"✅ Datos filtrados del dólar oficial: {len(datos_filtrados)} registros")
+        logger.info(f"✅ Datos filtrados del dólar oficial: {len(datos_filtrados)} registros desde 2014")
         
         # Validar estructura de datos
         sample_record = datos_filtrados[0]
@@ -1062,7 +1215,6 @@ def download_usd_historical_dolarapi(directories: dict) -> dict:
         
         logger.info(f"✅ Datos USD oficiales filtrados guardados: {len(datos_filtrados)} registros")
         logger.info(f"📊 Rango de fechas filtrado: {date_range}")
-        logger.info(f"📋 Campos en cada registro: {list(sample_record.keys())}")
         
         return {
             "status": "downloaded",
@@ -1071,31 +1223,21 @@ def download_usd_historical_dolarapi(directories: dict) -> dict:
             "data": datos_filtrados,
             "date_range": date_range,
             "api_source": "argentinadatos.com",
-            "filter_applied": "dolar_oficial_desde_2018"
+            "filter_applied": "dolar_oficial_desde_2014"
         }
         
-    except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Error de conexión con argentinadatos.com: {e}")
-        return {"status": "error", "error": f"Error de conexión: {str(e)}"}
-    
-    except json.JSONDecodeError as e:
-        logger.error(f"❌ Error decodificando JSON: {e}")
-        return {"status": "error", "error": f"Error JSON: {str(e)}"}
-    
     except Exception as e:
         logger.error(f"❌ Error descargando USD desde argentinadatos.com: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
         return {"status": "error", "error": str(e)}
 
 @task
-def process_usd_to_quarterly_averages(
+def process_usd_to_monthly_averages(
     usd_data: dict,
     directories: dict
 ) -> dict:
     """
-    Procesa los datos históricos del dólar para obtener promedios trimestrales y variables derivadas.
-    Adaptado para argentinadatos.com API.
+    Procesa los datos históricos del dólar para obtener promedios, mínimos y máximos MENSUALES.
+    Adaptado para datos mensuales desde 2014 con variación mensual.
     """
     try:
         if usd_data.get("status") != "downloaded":
@@ -1105,8 +1247,7 @@ def process_usd_to_quarterly_averages(
         data = usd_data["data"]
         df = pd.DataFrame(data)
         
-        logger.info(f"📊 Procesando {len(df)} registros de USD desde {usd_data.get('api_source', 'API')}")
-        logger.info(f"📋 Columnas disponibles: {list(df.columns)}")
+        logger.info(f"📊 Procesando {len(df)} registros de USD MENSUAL desde {usd_data.get('api_source', 'API')}")
         
         # Identificar columnas de fecha y precio de venta
         fecha_col = None
@@ -1137,7 +1278,7 @@ def process_usd_to_quarterly_averages(
         # Procesar fechas
         df["fecha"] = pd.to_datetime(df[fecha_col], errors="coerce")
         df = df[df["fecha"].notna()]
-        df = df[df["fecha"] >= "2018-01-01"]
+        df = df[df["fecha"] >= "2014-01-01"]
         
         # Asegurar que venta sea numérico
         df["venta"] = pd.to_numeric(df[venta_col], errors="coerce")
@@ -1146,56 +1287,78 @@ def process_usd_to_quarterly_averages(
         logger.info(f"📅 Datos después de limpieza: {len(df)} registros")
         logger.info(f"📊 Rango USD: ${df['venta'].min():.2f} - ${df['venta'].max():.2f}")
         
-        # Crear índice trimestral
-        df["anio_trimestre"] = df["fecha"].dt.year.astype(str) + "Q" + df["fecha"].dt.quarter.astype(str)
+        # Crear índice MENSUAL - FORMATO YYYY-MM
+        df["año_mes"] = df["fecha"].dt.strftime('%Y-%m')
         
-        # Agregación trimestral - solo precio promedio y días
-        df_quarterly = df.groupby("anio_trimestre").agg(
+        # Agregación MENSUAL - AMPLIADA con min, max y variación
+        df_monthly = df.groupby("año_mes").agg(
             precio_promedio_usd=("venta", "mean"),
+            precio_minimo_usd=("venta", "min"),      # NUEVO: valor mínimo del mes
+            precio_maximo_usd=("venta", "max"),      # NUEVO: valor máximo del mes
             dias=("venta", "count")
         ).reset_index()
         
+        # CALCULAR VARIACIÓN MENSUAL (diferencia entre máximo y mínimo)
+        df_monthly["variacion_usd_mensual"] = df_monthly["precio_maximo_usd"] - df_monthly["precio_minimo_usd"]
+        
+        # CALCULAR PORCENTAJE DE VARIACIÓN MENSUAL
+        df_monthly["variacion_porcentual_usd"] = (
+            (df_monthly["precio_maximo_usd"] - df_monthly["precio_minimo_usd"]) / 
+            df_monthly["precio_minimo_usd"] * 100
+        ).round(2)
+        
         # Renombrar columna para merge con turismo
-        df_quarterly = df_quarterly.rename(columns={"anio_trimestre": "indice_tiempo"})
+        df_monthly = df_monthly.rename(columns={"año_mes": "indice_tiempo"})
         
         # Redondear valores
-        df_quarterly["precio_promedio_usd"] = df_quarterly["precio_promedio_usd"].round(2)
+        df_monthly["precio_promedio_usd"] = df_monthly["precio_promedio_usd"].round(2)
+        df_monthly["precio_minimo_usd"] = df_monthly["precio_minimo_usd"].round(2)
+        df_monthly["precio_maximo_usd"] = df_monthly["precio_maximo_usd"].round(2)
+        df_monthly["variacion_usd_mensual"] = df_monthly["variacion_usd_mensual"].round(2)
         
-        # Guardar CSV procesado
+        # Log estadísticas de variación
+        logger.info(f"💰 Estadísticas de variación USD mensual:")
+        logger.info(f"  📊 Variación promedio: ${df_monthly['variacion_usd_mensual'].mean():.2f}")
+        logger.info(f"  📊 Variación máxima: ${df_monthly['variacion_usd_mensual'].max():.2f}")
+        logger.info(f"  📊 Variación mínima: ${df_monthly['variacion_usd_mensual'].min():.2f}")
+        logger.info(f"  📊 Variación porcentual promedio: {df_monthly['variacion_porcentual_usd'].mean():.2f}%")
+        
+        # Guardar CSV procesado MENSUAL
         processed_dir = Path(directories["processed"]) / "economico"
         processed_dir.mkdir(parents=True, exist_ok=True)
-        simple_path = processed_dir / "usd_quarterly_argentinadatos.csv"
-        df_quarterly.to_csv(simple_path, index=False, encoding="utf-8")
+        monthly_path = processed_dir / "usd_monthly_argentinadatos.csv"
+        df_monthly.to_csv(monthly_path, index=False, encoding="utf-8")
         
-        logger.info(f"✅ USD trimestral procesado: {len(df_quarterly)} trimestres")
-        logger.info(f"📊 Rango temporal: {df_quarterly['indice_tiempo'].min()} - {df_quarterly['indice_tiempo'].max()}")
-        logger.info(f"💰 Precio promedio general: ${df_quarterly['precio_promedio_usd'].mean():.2f}")
+        logger.info(f"✅ USD mensual procesado: {len(df_monthly)} meses")
+        logger.info(f"📊 Rango temporal: {df_monthly['indice_tiempo'].min()} - {df_monthly['indice_tiempo'].max()}")
+        logger.info(f"💰 Precio promedio general: ${df_monthly['precio_promedio_usd'].mean():.2f}")
+        logger.info(f"📋 Columnas USD generadas: {list(df_monthly.columns)}")
         
         return {
             "status": "processed",
-            "simple_path": str(simple_path),
-            "records": len(df_quarterly),
-            "date_range": f"{df_quarterly['indice_tiempo'].min()} - {df_quarterly['indice_tiempo'].max()}",
-            "avg_usd_price": round(df_quarterly['precio_promedio_usd'].mean(), 2)
+            "monthly_path": str(monthly_path),
+            "records": len(df_monthly),
+            "date_range": f"{df_monthly['indice_tiempo'].min()} - {df_monthly['indice_tiempo'].max()}",
+            "avg_usd_price": round(df_monthly['precio_promedio_usd'].mean(), 2),
+            "avg_variation": round(df_monthly['variacion_usd_mensual'].mean(), 2),
+            "max_variation": round(df_monthly['variacion_usd_mensual'].max(), 2)
         }
     except Exception as e:
-        logger.error(f"❌ Error procesando USD trimestral: {e}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logger.error(f"❌ Error procesando USD mensual: {e}")
         return {"status": "error", "error": str(e)}
 
-@task
+@task(execution_timeout=timedelta(minutes=15))
 def download_google_trends_csv(
     spec: Dict[str, Any],
     directories: Dict[str, str]
 ) -> Dict[str, Any]:
-    """Descarga datos de Google Trends para el término 'Mendoza' desde 2018."""
+    """Descarga datos de Google Trends para el término 'Mendoza' desde 2014 - MENSUAL."""
     try:
         src = spec["src"]
         name = spec["name"] 
         search_term = spec.get("search_term", "Mendoza")
         geo = spec.get("geo", "AR")
-        date_from = spec.get("date_from", "2018-01-01")
+        date_from = spec.get("date_from", "2014-01-01")  # NUEVA FECHA INICIO
         date_to = spec.get("date_to", datetime.now().strftime('%Y-%m-%d'))
         category = spec.get("category", "trends")
         
@@ -1203,7 +1366,7 @@ def download_google_trends_csv(
         raw_dir.mkdir(parents=True, exist_ok=True)
         dest_path = raw_dir / name
         
-        logger.info(f"📈 Descargando Google Trends para '{search_term}' desde {date_from} hasta {date_to}")
+        logger.info(f"📈 Descargando Google Trends MENSUAL para '{search_term}' desde {date_from} hasta {date_to}")
         
         try:
             # Importar pytrends si está disponible
@@ -1216,7 +1379,7 @@ def download_google_trends_csv(
             timeframe = f"{date_from} {date_to}"
             
             # Realizar búsqueda
-            logger.info(f"🔍 Buscando tendencia para: {search_term} en {geo} durante {timeframe}")
+            logger.info(f"🔍 Buscando tendencia MENSUAL para: {search_term} en {geo} durante {timeframe}")
             pytrends.build_payload([search_term], cat=0, timeframe=timeframe, geo=geo, gprop='')
             
             # Obtener datos de interés a lo largo del tiempo
@@ -1250,7 +1413,7 @@ def download_google_trends_csv(
             
             file_size = dest_path.stat().st_size
             
-            logger.info(f"✅ Google Trends descargado: {len(interest_over_time_df)} registros mensuales")
+            logger.info(f"✅ Google Trends MENSUAL descargado: {len(interest_over_time_df)} registros mensuales")
             logger.info(f"📊 Rango de interés: {interest_over_time_df['interes_google'].min()} - {interest_over_time_df['interes_google'].max()}")
             logger.info(f"📅 Período: {interest_over_time_df['fecha'].min()} - {interest_over_time_df['fecha'].max()}")
             
@@ -1299,12 +1462,12 @@ def download_google_trends_csv(
         }
 
 @task(execution_timeout=timedelta(minutes=10))
-def process_google_trends_to_quarterly(
+def process_google_trends_to_monthly(
     trends_data: dict,
     directories: dict
 ) -> dict:
     """
-    Procesa datos mensuales de Google Trends a promedios trimestrales.
+    Procesa datos mensuales de Google Trends directamente (ya son mensuales).
     """
     try:
         if trends_data.get("status") != "downloaded":
@@ -1313,6 +1476,7 @@ def process_google_trends_to_quarterly(
         
         trends_path = trends_data["path"]
         
+        # Verificar que el archivo existe
         if not Path(trends_path).exists():
             logger.error(f"Archivo de Google Trends no existe: {trends_path}")
             return {"status": "error", "error": "Trends file not found"}
@@ -1320,8 +1484,8 @@ def process_google_trends_to_quarterly(
         # Leer datos de Google Trends
         df_trends = pd.read_csv(trends_path)
         
-        logger.info(f"📈 Procesando Google Trends: {len(df_trends)} registros mensuales")
-        logger.info(f"📋 Columnas disponibles: {list(df_trends.columns)}")
+        logger.info(f"📈 Procesando Google Trends MENSUAL: {len(df_trends)} registros mensuales")
+        logger.info(f"📋 Columnas Google Trends: {list(df_trends.columns)}")
         
         # Buscar columnas de fecha e interés
         fecha_col = None
@@ -1350,7 +1514,7 @@ def process_google_trends_to_quarterly(
         # Procesar fechas
         df_trends["fecha"] = pd.to_datetime(df_trends[fecha_col], errors="coerce")
         df_trends = df_trends[df_trends["fecha"].notna()]
-        df_trends = df_trends[df_trends["fecha"] >= "2018-01-01"]
+        df_trends = df_trends[df_trends["fecha"] >= "2014-01-01"]  # FILTRO DESDE 2014
         
         # Asegurar que el interés sea numérico
         df_trends["interes_google"] = pd.to_numeric(df_trends[interes_col], errors="coerce")
@@ -1359,467 +1523,596 @@ def process_google_trends_to_quarterly(
         logger.info(f"📅 Datos después de limpieza: {len(df_trends)} registros")
         logger.info(f"📊 Rango de interés: {df_trends['interes_google'].min()} - {df_trends['interes_google'].max()}")
         
-        # Crear índice trimestral
-        df_trends["anio_trimestre"] = (
-            df_trends["fecha"].dt.year.astype(str) + "Q" + 
-            df_trends["fecha"].dt.quarter.astype(str)
-        )
+        # Crear índice MENSUAL - FORMATO YYYY-MM
+        df_trends["año_mes"] = df_trends["fecha"].dt.strftime('%Y-%m')
         
-        # Agregación trimestral
-        df_quarterly = df_trends.groupby("anio_trimestre").agg(
+        # Como los datos ya son mensuales, solo agregamos por mes si hay duplicados
+        df_monthly = df_trends.groupby("año_mes").agg(
             interes_google_promedio=("interes_google", "mean"),
             interes_google_max=("interes_google", "max"),
             interes_google_min=("interes_google", "min"),
-            meses_con_datos=("interes_google", "count")
+            registros=("interes_google", "count")
         ).reset_index()
         
         # Renombrar columna para merge
-        df_quarterly = df_quarterly.rename(columns={"anio_trimestre": "indice_tiempo"})
+        df_monthly = df_monthly.rename(columns={"año_mes": "indice_tiempo"})
         
         # Redondear valores
-        df_quarterly["interes_google_promedio"] = df_quarterly["interes_google_promedio"].round(1)
+        df_monthly["interes_google_promedio"] = df_monthly["interes_google_promedio"].round(1)
         
-        # Crear variable de alto interés (por encima de la mediana)
-        mediana_interes = df_quarterly["interes_google_promedio"].median()
-        df_quarterly["interes_alto"] = (df_quarterly["interes_google_promedio"] > mediana_interes).astype(int)
+        # CREAR VARIABLE DE ALTO INTERÉS (por encima de la mediana) - CORREGIDO
+        mediana_interes = df_monthly["interes_google_promedio"].median()
+        df_monthly["interes_alto"] = (df_monthly["interes_google_promedio"] > mediana_interes).astype(int)
         
-        # Guardar CSV procesado
+        logger.info(f"📈 Variable interes_alto creada - Mediana: {mediana_interes:.1f}")
+        logger.info(f"📊 Distribución interes_alto: {df_monthly['interes_alto'].value_counts().to_dict()}")
+        
+        # Guardar CSV procesado MENSUAL
         processed_dir = Path(directories["processed"]) / "trends"
         processed_dir.mkdir(parents=True, exist_ok=True)
-        trends_quarterly_path = processed_dir / "google_trends_mendoza_quarterly.csv"
-        df_quarterly.to_csv(trends_quarterly_path, index=False, encoding="utf-8")
+        trends_monthly_path = processed_dir / "google_trends_mendoza_monthly.csv"
+        df_monthly.to_csv(trends_monthly_path, index=False, encoding="utf-8")
         
-        logger.info(f"✅ Google Trends trimestral procesado: {len(df_quarterly)} trimestres")
-        logger.info(f"📊 Rango temporal: {df_quarterly['indice_tiempo'].min()} - {df_quarterly['indice_tiempo'].max()}")
-        logger.info(f"📈 Interés promedio general: {df_quarterly['interes_google_promedio'].mean():.1f}")
-        logger.info(f"🎯 Mediana de interés: {mediana_interes:.1f}")
+        logger.info(f"✅ Google Trends mensual procesado: {len(df_monthly)} meses")
+        logger.info(f"📊 Rango temporal: {df_monthly['indice_tiempo'].min()} - {df_monthly['indice_tiempo'].max()}")
+        logger.info(f"📈 Interés promedio general: {df_monthly['interes_google_promedio'].mean():.1f}")
+        logger.info(f"📋 Columnas finales: {list(df_monthly.columns)}")
         
         return {
             "status": "processed",
-            "quarterly_path": str(trends_quarterly_path),
-            "records": len(df_quarterly),
-            "date_range": f"{df_quarterly['indice_tiempo'].min()} - {df_quarterly['indice_tiempo'].max()}",
-            "avg_interest": round(df_quarterly['interes_google_promedio'].mean(), 1),
+            "monthly_path": str(trends_monthly_path),
+            "records": len(df_monthly),
+            "date_range": f"{df_monthly['indice_tiempo'].min()} - {df_monthly['indice_tiempo'].max()}",
+            "avg_interest": round(df_monthly['interes_google_promedio'].mean(), 1),
             "median_interest": round(mediana_interes, 1)
         }
         
     except Exception as e:
-        logger.error(f"❌ Error procesando Google Trends trimestral: {e}")
+        logger.error(f"❌ Error procesando Google Trends mensual: {e}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return {"status": "error", "error": str(e)}
 
 @task
-def create_final_mendoza_dataset(
+def create_final_monthly_dataset(
     processing_summary: Dict[str, Any],
-    usd_quarterly: Dict[str, Any],
-    trends_quarterly: Dict[str, Any],  # Nuevo parámetro
+    usd_monthly: Dict[str, Any],
+    trends_monthly: Dict[str, Any],
     directories: Dict[str, str]
 ) -> str:
-    """Crea dataset final trimestral con USD y Google Trends sincronizados."""
+    """Crea dataset final MENSUAL con TODAS las fuentes ETI corregidas."""
     try:
-        logger.info("🎯 Creando dataset final con USD y Google Trends...")
+        logger.info("🎯 Creando dataset final MENSUAL con TODAS las fuentes ETI...")
 
         processed_files = processing_summary.get("processed_files", {})
         turismo_files = processed_files.get("turismo", [])
         
-        # Identificar archivos ETI
-        aeropuerto_file = None
-        cristo_file = None
+        logger.info(f"📊 Total archivos de turismo procesados: {len(turismo_files)}")
+        for file_info in turismo_files:
+            logger.info(f"  📄 {file_info.get('original_file', 'unknown')} - Freq: {file_info.get('frequency', 'N/A')} - Dividido: {file_info.get('was_quarterly_divided', False)}")
+        
+        # Identificar archivos ETI por tipo - CORREGIDO con patrones más específicos
+        eti_files = {
+            "mendoza_aeropuerto": None,
+            "mendoza_cristo": None,
+            "ezeiza_aeroparque": None,
+            "cordoba": None,
+            "puerto_bs_as": None
+        }
+        
+        # Mapeo de patrones más específicos
         for file_info in turismo_files:
             fname = file_info.get("original_file", "").lower()
-            if "aeropuerto" in fname:
-                aeropuerto_file = file_info
-            elif "cristo" in fname:
-                cristo_file = file_info
+            src = file_info.get("data_source", "").lower()
+            
+            logger.info(f"🔍 Analizando archivo: {fname} - Fuente: {src}")
+            
+            # Identificación mejorada por source y nombre
+            if ("aeropuerto" in fname and "mendoza" in fname) or src == "eti_aeropuerto":
+                eti_files["mendoza_aeropuerto"] = file_info
+                logger.info(f"✅ Identificado como Mendoza Aeropuerto: {fname}")
+            elif ("cristo" in fname or "redentor" in fname) or src == "eti_cristo_redentor":
+                eti_files["mendoza_cristo"] = file_info
+                logger.info(f"✅ Identificado como Cristo Redentor: {fname}")
+            elif ("ezeiza" in fname or "aeroparque" in fname) or src == "eti_ezeiza_aeroparque":
+                eti_files["ezeiza_aeroparque"] = file_info
+                logger.info(f"✅ Identificado como Ezeiza/Aeroparque: {fname}")
+            elif ("cordoba" in fname) or src == "eti_cordoba_aeropuerto":
+                eti_files["cordoba"] = file_info
+                logger.info(f"✅ Identificado como Córdoba: {fname}")
+            elif ("puerto" in fname or "buenos_aires" in fname) or src == "eti_puerto_buenos_aires":
+                eti_files["puerto_bs_as"] = file_info
+                logger.info(f"✅ Identificado como Puerto Buenos Aires: {fname}")
+            else:
+                logger.warning(f"⚠️ Archivo ETI no identificado: {fname} - Fuente: {src}")
 
-        if not aeropuerto_file or not cristo_file:
-            logger.error("❌ No se encontraron archivos ETI necesarios")
+        # Verificar archivos encontrados
+        found_files = {k: v for k, v in eti_files.items() if v is not None}
+        missing_files = [k for k, v in eti_files.items() if v is None]
+        
+        logger.info(f"✅ Archivos ETI encontrados: {list(found_files.keys())}")
+        if missing_files:
+            logger.warning(f"⚠️ Archivos ETI faltantes: {missing_files}")
+        
+        if len(found_files) == 0:
+            logger.error("❌ No se encontraron archivos ETI")
             return ""
 
-        # Procesar datos de turismo
-        df_aeropuerto_full = pd.read_csv(aeropuerto_file["processed_path"])
-        df_cristo_full = pd.read_csv(cristo_file["processed_path"])
-        
-        # DEBUG: Verificar columnas disponibles
-        logger.info(f"🔍 Columnas aeropuerto: {list(df_aeropuerto_full.columns)}")
-        logger.info(f"🔍 Columnas cristo: {list(df_cristo_full.columns)}")
-        
-        # Buscar columnas de turistas de manera más flexible
-        turistas_col_aeropuerto = None
-        turistas_col_cristo = None
-        indice_col_aeropuerto = None
-        indice_col_cristo = None
-        
-        # Buscar columnas de turistas
-        for col in df_aeropuerto_full.columns:
-            if 'turistas' in col.lower() and ('no_residentes' in col.lower() or 'residentes' in col.lower()):
-                turistas_col_aeropuerto = col
-                break
-        
-        for col in df_cristo_full.columns:
-            if 'turistas' in col.lower() and ('no_residentes' in col.lower() or 'residentes' in col.lower()):
-                turistas_col_cristo = col
-                break
-        
-        # Buscar columnas de índice temporal
-        for col in df_aeropuerto_full.columns:
-            if col.lower() in ['indice_tiempo', 'fecha_std', 'periodo', 'anio_trimestre']:
-                indice_col_aeropuerto = col
-                break
-        
-        for col in df_cristo_full.columns:
-            if col.lower() in ['indice_tiempo', 'fecha_std', 'periodo', 'anio_trimestre']:
-                indice_col_cristo = col
-                break
-        
-        logger.info(f"✅ Columnas identificadas - Aeropuerto: {indice_col_aeropuerto}, {turistas_col_aeropuerto}")
-        logger.info(f"✅ Columnas identificadas - Cristo: {indice_col_cristo}, {turistas_col_cristo}")
-        
-        if not turistas_col_aeropuerto or not turistas_col_cristo:
-            logger.error("❌ No se encontraron columnas de turistas")
-            return ""
-        
-        if not indice_col_aeropuerto or not indice_col_cristo:
-            logger.error("❌ No se encontraron columnas de índice temporal")
-            return ""
-        
-        # Extraer datos necesarios
-        df_aeropuerto = df_aeropuerto_full[[indice_col_aeropuerto, turistas_col_aeropuerto]].copy()
-        df_cristo = df_cristo_full[[indice_col_cristo, turistas_col_cristo]].copy()
-        
-        # Estandarizar nombres de columnas
-        df_aeropuerto.columns = ["indice_tiempo", "turistas_no_residentes"]
-        df_cristo.columns = ["indice_tiempo", "turistas_no_residentes"]
-        
-        # CONVERTIR FECHAS A FORMATO TRIMESTRAL ANTES DE AGRUPAR
-        def convertir_fecha_a_trimestre(fecha_str):
-            """Convierte fecha '2018-01-01' a formato '2018Q1'"""
+        # Función para convertir fecha a formato mensual YYYY-MM
+        def convertir_fecha_a_mes(fecha_str):
+            """Convierte fecha '2018-01-01' a formato '2018-01'"""
             try:
                 if pd.isna(fecha_str):
                     return None
                 fecha = pd.to_datetime(fecha_str)
-                año = fecha.year
-                trimestre = fecha.quarter
-                return f"{año}Q{trimestre}"
+                return fecha.strftime('%Y-%m')
             except:
                 return None
+
+        # Procesar cada archivo ETI y agregar por mes - MEJORADO CON VERIFICACIÓN DE COLUMNAS
+        turistas_data = {}
         
-        # Aplicar conversión de formato
-        df_aeropuerto['indice_tiempo_original'] = df_aeropuerto['indice_tiempo']
-        df_cristo['indice_tiempo_original'] = df_cristo['indice_tiempo']
-        
-        df_aeropuerto['indice_tiempo'] = df_aeropuerto['indice_tiempo'].apply(convertir_fecha_a_trimestre)
-        df_cristo['indice_tiempo'] = df_cristo['indice_tiempo'].apply(convertir_fecha_a_trimestre)
-        
-        # Filtrar valores nulos después de conversión
-        df_aeropuerto = df_aeropuerto[df_aeropuerto['indice_tiempo'].notna()]
-        df_cristo = df_cristo[df_cristo['indice_tiempo'].notna()]
-        
-        logger.info(f"🔄 Conversión completada - Aeropuerto: {len(df_aeropuerto)} registros")
-        logger.info(f"🔄 Conversión completada - Cristo: {len(df_cristo)} registros")
-        logger.info(f"🔍 Muestra índices convertidos: {df_aeropuerto['indice_tiempo'].head().tolist()}")
-        
-        # Convertir a numérico
-        df_aeropuerto["turistas_no_residentes"] = pd.to_numeric(df_aeropuerto["turistas_no_residentes"], errors='coerce').fillna(0)
-        df_cristo["turistas_no_residentes"] = pd.to_numeric(df_cristo["turistas_no_residentes"], errors='coerce').fillna(0)
+        for source_name, file_info in found_files.items():
+            try:
+                logger.info(f"🔄 Procesando fuente {source_name}...")
+                df = pd.read_csv(file_info["processed_path"])
+                
+                logger.info(f"📊 {source_name} - Datos leídos: {len(df)} filas, columnas: {list(df.columns)}")
+                
+                # VERIFICAR DUPLICADOS DE COLUMNAS ANTES DE PROCESAMIENTO
+                duplicate_cols = df.columns[df.columns.duplicated()].tolist()
+                if duplicate_cols:
+                    logger.warning(f"⚠️ {source_name} - Columnas duplicadas detectadas: {duplicate_cols}")
+                    # Renombrar columnas duplicadas
+                    df.columns = pd.io.common.dedup_names(df.columns, is_potential_multiindex=False)
+                    logger.info(f"✅ {source_name} - Columnas después de deduplicación: {list(df.columns)}")
+                
+                # Buscar columnas necesarias de manera más flexible
+                indice_col = None
+                turistas_col = None
+                
+                # Buscar columna de índice temporal
+                for col in df.columns:
+                    col_lower = col.lower() if isinstance(col, str) else str(col).lower()
+                    if col_lower in ['indice_tiempo', 'fecha_std', 'periodo', 'año_mes', 'tiempo']:
+                        indice_col = col
+                        break
+                
+                # Buscar columna de turistas de manera más amplia
+                for col in df.columns:
+                    col_lower = col.lower() if isinstance(col, str) else str(col).lower()
+                    if any(keyword in col_lower for keyword in ['turistas', 'visitantes', 'no_residentes', 'extranjeros']):
+                        turistas_col = col
+                        break
+                
+                if not indice_col or not turistas_col:
+                    logger.error(f"❌ {source_name} - Columnas faltantes: índice={indice_col}, turistas={turistas_col}")
+                    logger.error(f"📋 Columnas disponibles: {list(df.columns)}")
+                    continue
+                
+                logger.info(f"✅ {source_name} - Usando columnas: índice='{indice_col}', turistas='{turistas_col}'")
+                
+                # Extraer y limpiar datos - ASEGURAR NOMBRES ÚNICOS
+                df_clean = df[[indice_col, turistas_col]].copy()
+                df_clean.columns = ["indice_tiempo", "turistas"]
+                
+                # VERIFICAR QUE NO HAY DUPLICADOS EN EL DATAFRAME LIMPIO
+                if df_clean.columns.duplicated().any():
+                    logger.error(f"❌ {source_name} - DataFrame limpio tiene columnas duplicadas")
+                    continue
+                
+                # Log datos originales
+                logger.info(f"📊 {source_name} - Datos originales (muestra): {df_clean['turistas'].head().tolist()}")
+                logger.info(f"📊 {source_name} - Total turistas original: {df_clean['turistas'].sum():.2f}")
+                
+                # Convertir índice a formato mensual
+                df_clean['indice_tiempo'] = df_clean['indice_tiempo'].apply(convertir_fecha_a_mes)
+                df_clean = df_clean[df_clean['indice_tiempo'].notna()]
+                
+                # Convertir turistas a numérico y agrupar por mes
+                df_clean["turistas"] = pd.to_numeric(df_clean["turistas"], errors='coerce').fillna(0)
+                
+                # Agrupar por mes (sumar si hay múltiples registros por mes)
+                monthly_agg = df_clean.groupby("indice_tiempo", as_index=False)["turistas"].sum()
+                
+                # VERIFICAR QUE EL RESULTADO NO TIENE COLUMNAS DUPLICADAS
+                if monthly_agg.columns.duplicated().any():
+                    logger.error(f"❌ {source_name} - monthly_agg tiene columnas duplicadas")
+                    continue
+                
+                # Log datos agregados
+                logger.info(f"📊 {source_name} - Después de agregación mensual: {len(monthly_agg)} meses")
+                logger.info(f"📊 {source_name} - Total turistas agregado: {monthly_agg['turistas'].sum():.2f}")
+                logger.info(f"📊 {source_name} - Rango temporal: {monthly_agg['indice_tiempo'].min()} - {monthly_agg['indice_tiempo'].max()}")
+                
+                # Renombrar columna específica - ASEGURAR NOMBRE ÚNICO
+                column_name = f"turistas_{source_name}"
+                monthly_agg = monthly_agg.rename(columns={"turistas": column_name})
+                
+                # VERIFICAR QUE EL DATAFRAME FINAL TIENE COLUMNAS ÚNICAS
+                if monthly_agg.columns.duplicated().any():
+                    logger.error(f"❌ {source_name} - Columnas duplicadas después del rename: {list(monthly_agg.columns)}")
+                    continue
+                
+                turistas_data[source_name] = monthly_agg
+                
+                logger.info(f"✅ {source_name}: {len(monthly_agg)} meses procesados correctamente")
+                
+            except Exception as e:
+                logger.error(f"❌ Error procesando {source_name}: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                continue
 
-        # Agrupar por indice_tiempo
-        agg_aeropuerto = df_aeropuerto.groupby("indice_tiempo", as_index=False)["turistas_no_residentes"].sum()
-        agg_cristo = df_cristo.groupby("indice_tiempo", as_index=False)["turistas_no_residentes"].sum()
+        if not turistas_data:
+            logger.error("❌ No se procesaron datos de turismo")
+            return ""
 
-        agg_aeropuerto = agg_aeropuerto.rename(columns={"turistas_no_residentes": "turistas_aeropuerto"})
-        agg_cristo = agg_cristo.rename(columns={"turistas_no_residentes": "turistas_cristo"})
+        logger.info(f"📊 Fuentes ETI procesadas exitosamente: {len(turistas_data)}")
 
-        # Merge datos de turismo
-        turistas_agg = pd.merge(agg_aeropuerto, agg_cristo, on="indice_tiempo", how="outer")
-        turistas_agg["turistas_aeropuerto"] = turistas_agg["turistas_aeropuerto"].fillna(0)
-        turistas_agg["turistas_cristo"] = turistas_agg["turistas_cristo"].fillna(0)
-        turistas_agg["turistas_no_residentes_total"] = turistas_agg["turistas_aeropuerto"] + turistas_agg["turistas_cristo"]
-
-        logger.info(f"✅ Datos de turismo procesados: {len(turistas_agg)} trimestres")
-        logger.info(f"🔍 Muestra índice_tiempo turismo CONVERTIDO: {sorted(turistas_agg['indice_tiempo'].unique())[:5]}")
-
-        # Preparar dataset final con datos de turismo
-        df_final = turistas_agg[["indice_tiempo", "turistas_no_residentes_total", "turistas_aeropuerto", "turistas_cristo"]].copy()
-
-        # Merge con datos USD procesados desde argentinadatos.com
-        if usd_quarterly.get("status") == "processed":
-            logger.info("💰 Mergeando con datos USD trimestrales desde argentinadatos.com...")
+        # Merge todos los datos de turismo - CON VERIFICACIÓN DE DUPLICADOS
+        df_final = None
+        for source_name, data in turistas_data.items():
+            logger.info(f"🔗 Mergeando {source_name}: {len(data)} registros")
+            logger.info(f"📋 Columnas en {source_name}: {list(data.columns)}")
             
-            # Leer datos USD trimestrales
-            usd_path = usd_quarterly["simple_path"]
-            logger.info(f"📁 Leyendo USD desde: {usd_path}")
+            # VERIFICAR QUE NO HAY COLUMNAS DUPLICADAS ANTES DEL MERGE
+            if data.columns.duplicated().any():
+                logger.error(f"❌ {source_name} tiene columnas duplicadas: {data.columns[data.columns.duplicated()].tolist()}")
+                continue
             
-            if not Path(usd_path).exists():
-                logger.error(f"❌ Archivo USD no existe: {usd_path}")
-                df_final["precio_promedio_usd"] = None
+            if df_final is None:
+                df_final = data.copy()
+                logger.info(f"📋 df_final inicializado con columnas: {list(df_final.columns)}")
             else:
+                # VERIFICAR ESTADO ANTES DEL MERGE
+                logger.info(f"📋 df_final antes del merge: {list(df_final.columns)}")
+                logger.info(f"📋 data para merge: {list(data.columns)}")
+                
+                # VERIFICAR QUE AMBOS DATAFRAMES TIENEN COLUMNAS ÚNICAS
+                if df_final.columns.duplicated().any():
+                    logger.error(f"❌ df_final tiene columnas duplicadas antes del merge: {df_final.columns[df_final.columns.duplicated()].tolist()}")
+                    # Intentar limpiar duplicados
+                    df_final = df_final.loc[:, ~df_final.columns.duplicated()]
+                    logger.info(f"✅ df_final limpiado: {list(df_final.columns)}")
+                
+                try:
+                    df_final = df_final.merge(data, on="indice_tiempo", how="outer")
+                    logger.info(f"✅ Merge exitoso. Columnas resultantes: {list(df_final.columns)}")
+                except Exception as merge_error:
+                    logger.error(f"❌ Error en merge con {source_name}: {merge_error}")
+                    logger.error(f"📋 df_final columns: {list(df_final.columns)}")
+                    logger.error(f"📋 data columns: {list(data.columns)}")
+                    continue
+        
+        logger.info(f"📊 Dataset después del merge: {len(df_final)} registros, {len(df_final.columns)} columnas")
+        logger.info(f"📋 Columnas finales: {list(df_final.columns)}")
+        
+        # Verificar que no hay columnas duplicadas en el resultado final
+        if df_final.columns.duplicated().any():
+            logger.error(f"❌ df_final FINAL tiene columnas duplicadas")
+            logger.error(f"📋 Columnas duplicadas: {df_final.columns[df_final.columns.duplicated()].tolist()}")
+            df_final = df_final.loc[:, ~df_final.columns.duplicated()]
+            logger.info(f"✅ df_final FINAL limpiado: {list(df_final.columns)}")
+        
+        # Rellenar valores faltantes con 0
+        for col in df_final.columns:
+            if col.startswith("turistas_"):
+                df_final[col] = df_final[col].fillna(0)
+        
+        # Crear total de turistas
+        turistas_cols = [col for col in df_final.columns if col.startswith("turistas_")]
+        df_final["turistas_no_residentes_total"] = df_final[turistas_cols].sum(axis=1)
+        
+        # Log resumen de turismo
+        logger.info(f"✅ Datos de turismo MENSUAL procesados: {len(df_final)} meses")
+        logger.info(f"📊 Fuentes incluidas: {turistas_cols}")
+        logger.info(f"📊 Total turistas (todas las fuentes): {df_final['turistas_no_residentes_total'].sum():.2f}")
+        
+        # Verificar que tenemos datos de todas las fuentes esperadas
+        for col in turistas_cols:
+            total_col = df_final[col].sum()
+            logger.info(f"📊 {col}: {total_col:.2f} turistas totales")
+
+        # Merge con datos USD mensuales - CON VERIFICACIÓN DE DUPLICADOS Y NUEVAS COLUMNAS
+        if usd_monthly.get("status") == "processed":
+            logger.info("💰 Mergeando con datos USD mensuales (incluyendo variación)...")
+            
+            usd_path = usd_monthly["monthly_path"]
+            
+            if Path(usd_path).exists():
                 df_usd = pd.read_csv(usd_path)
                 
-                logger.info(f"📊 Datos USD leídos: {len(df_usd)} trimestres")
+                logger.info(f"📊 Datos USD leídos: {len(df_usd)} meses")
                 logger.info(f"📋 Columnas USD: {list(df_usd.columns)}")
-                logger.info(f"🔍 Muestra índice_tiempo USD: {sorted(df_usd['indice_tiempo'].unique())[:5]}")
-                logger.info(f"💰 Muestra precios USD: {df_usd['precio_promedio_usd'].head().tolist()}")
                 
-                # DEBUG: Verificar tipos de datos antes del merge
-                logger.info(f"🔍 Tipo indice_tiempo turismo: {df_final['indice_tiempo'].dtype}")
-                logger.info(f"🔍 Tipo indice_tiempo USD: {df_usd['indice_tiempo'].dtype}")
+                # VERIFICAR DUPLICADOS EN USD
+                if df_usd.columns.duplicated().any():
+                    logger.warning(f"⚠️ df_usd tiene columnas duplicadas: {df_usd.columns[df_usd.columns.duplicated()].tolist()}")
+                    df_usd = df_usd.loc[:, ~df_usd.columns.duplicated()]
+                    logger.info(f"✅ df_usd limpiado: {list(df_usd.columns)}")
                 
-                # Asegurar que ambos índices sean string para el merge
+                # Asegurar tipos string para merge
                 df_final['indice_tiempo'] = df_final['indice_tiempo'].astype(str)
                 df_usd['indice_tiempo'] = df_usd['indice_tiempo'].astype(str)
                 
-                # Realizar merge
-                df_final_before_merge = df_final.copy()
-                df_final = df_final.merge(df_usd[['indice_tiempo', 'precio_promedio_usd']], on="indice_tiempo", how="left")
+                # VERIFICAR QUE df_final NO TIENE DUPLICADOS ANTES DEL MERGE USD
+                if df_final.columns.duplicated().any():
+                    logger.error(f"❌ df_final tiene columnas duplicadas antes del merge USD")
+                    df_final = df_final.loc[:, ~df_final.columns.duplicated()]
                 
-                # Verificar resultado del merge
-                usd_matches = df_final['precio_promedio_usd'].notna().sum()
-                total_rows = len(df_final)
+                # COLUMNAS USD AMPLIADAS para incluir variación
+                usd_columns_to_merge = ['indice_tiempo', 'precio_promedio_usd', 'precio_minimo_usd', 
+                                       'precio_maximo_usd', 'variacion_usd_mensual', 'variacion_porcentual_usd']
                 
-                logger.info(f"✅ Merge USD completado: {usd_matches}/{total_rows} trimestres con datos USD")
+                # Verificar que las columnas existen
+                available_usd_cols = [col for col in usd_columns_to_merge if col in df_usd.columns]
+                missing_usd_cols = [col for col in usd_columns_to_merge if col not in df_usd.columns]
                 
-                if usd_matches == 0:
-                    logger.error("❌ PROBLEMA: Ningún registro USD se mergeó correctamente")
-                    logger.info("🔍 Diagnóstico del merge:")
-                    logger.info(f"   - Índices únicos turismo: {sorted(df_final_before_merge['indice_tiempo'].unique())}")
-                    logger.info(f"   - Índices únicos USD: {sorted(df_usd['indice_tiempo'].unique())}")
-                    
-                    # Intentar merge manual para debug
-                    common_indices = set(df_final_before_merge['indice_tiempo'].unique()) & set(df_usd['indice_tiempo'].unique())
-                    logger.info(f"   - Índices en común: {sorted(common_indices)}")
-                    
-                    if len(common_indices) == 0:
-                        logger.error("   - NO HAY ÍNDICES EN COMÚN - revisar formato de fechas")
-                else:
-                    logger.info(f"✅ MERGE EXITOSO: {usd_matches} trimestres con datos USD sincronizados")
-                    
-                # Crear variables derivadas del USD solo si hay datos
+                if missing_usd_cols:
+                    logger.warning(f"⚠️ Columnas USD faltantes: {missing_usd_cols}")
+                
+                logger.info(f"💰 Columnas USD disponibles para merge: {available_usd_cols}")
+                
+                # Merge USD con todas las columnas disponibles
+                try:
+                    df_final = df_final.merge(df_usd[available_usd_cols], on="indice_tiempo", how="left")
+                    logger.info(f"✅ Merge USD exitoso. Columnas: {list(df_final.columns)}")
+                except Exception as usd_error:
+                    logger.error(f"❌ Error en merge USD: {usd_error}")
+                    logger.error(f"📋 df_final columns: {list(df_final.columns)}")
+                    logger.error(f"📋 df_usd columns: {list(df_usd.columns)}")
+                
+                usd_matches = df_final['precio_promedio_usd'].notna().sum() if 'precio_promedio_usd' in df_final.columns else 0
+                logger.info(f"✅ Merge USD completado: {usd_matches}/{len(df_final)} meses con datos USD")
+                
+                # Variables USD mejoradas
                 if usd_matches > 0:
+                    # Variable USD alto (por encima de la mediana)
                     median_usd = df_final['precio_promedio_usd'].median()
                     df_final['usd_alto'] = (df_final['precio_promedio_usd'] > median_usd).astype(int)
-                    logger.info(f"💰 Variable usd_alto creada (mediana: ${median_usd:.2f})")
+                    
+                    # NUEVA: Variable de alta variabilidad USD (por encima de la mediana de variación)
+                    if 'variacion_usd_mensual' in df_final.columns:
+                        median_variation = df_final['variacion_usd_mensual'].median()
+                        df_final['usd_alta_variabilidad'] = (df_final['variacion_usd_mensual'] > median_variation).astype(int)
+                        logger.info(f"💰 Variable usd_alta_variabilidad creada - Mediana variación: ${median_variation:.2f}")
+                    
+                    # Log estadísticas USD
+                    logger.info(f"💰 Estadísticas USD en dataset final:")
+                    logger.info(f"  📊 Precio promedio general: ${df_final['precio_promedio_usd'].mean():.2f}")
+                    if 'precio_minimo_usd' in df_final.columns:
+                        logger.info(f"  📊 Precio mínimo general: ${df_final['precio_minimo_usd'].mean():.2f}")
+                    if 'precio_maximo_usd' in df_final.columns:
+                        logger.info(f"  📊 Precio máximo general: ${df_final['precio_maximo_usd'].mean():.2f}")
+                    if 'variacion_usd_mensual' in df_final.columns:
+                        logger.info(f"  📊 Variación promedio: ${df_final['variacion_usd_mensual'].mean():.2f}")
                 else:
                     df_final['usd_alto'] = None
-                    logger.warning("⚠️ No se pudo crear variable usd_alto por falta de datos USD")
-            
+                    df_final['usd_alta_variabilidad'] = None
+            else:
+                logger.error(f"❌ Archivo USD no existe: {usd_path}")
+                df_final["precio_promedio_usd"] = None
+                df_final["precio_minimo_usd"] = None
+                df_final["precio_maximo_usd"] = None
+                df_final["variacion_usd_mensual"] = None
+                df_final["variacion_porcentual_usd"] = None
+                df_final['usd_alto'] = None
+                df_final['usd_alta_variabilidad'] = None
         else:
             logger.warning("⚠️ No hay datos USD procesados disponibles")
             df_final["precio_promedio_usd"] = None
+            df_final["precio_minimo_usd"] = None
+            df_final["precio_maximo_usd"] = None
+            df_final["variacion_usd_mensual"] = None
+            df_final["variacion_porcentual_usd"] = None
             df_final['usd_alto'] = None
+            df_final['usd_alta_variabilidad'] = None
 
-        # NUEVO: Merge con datos de Google Trends
-        if trends_quarterly.get("status") == "processed":
-            logger.info("📈 Mergeando con datos de Google Trends trimestrales...")
+        # Merge con datos de Google Trends mensuales - CON VERIFICACIÓN DE DUPLICADOS
+        if trends_monthly.get("status") == "processed":
+            logger.info("📈 Mergeando con datos de Google Trends mensuales...")
             
-            trends_path = trends_quarterly["quarterly_path"]
-            logger.info(f"📁 Leyendo Google Trends desde: {trends_path}")
+            trends_path = trends_monthly["monthly_path"]
             
-            if not Path(trends_path).exists():
+            if Path(trends_path).exists():
+                df_trends = pd.read_csv(trends_path)
+                
+                logger.info(f"📊 Datos Google Trends leídos: {len(df_trends)} meses")
+                logger.info(f"📋 Columnas Google Trends disponibles: {list(df_trends.columns)}")
+                
+                # VERIFICAR DUPLICADOS EN TRENDS
+                if df_trends.columns.duplicated().any():
+                    logger.warning(f"⚠️ df_trends tiene columnas duplicadas: {df_trends.columns[df_trends.columns.duplicated()].tolist()}")
+                    df_trends = df_trends.loc[:, ~df_trends.columns.duplicated()]
+                    logger.info(f"✅ df_trends limpiado: {list(df_trends.columns)}")
+                
+                # Verificar qué columnas están disponibles - CORREGIDO PARA EVITAR DUPLICADOS
+                required_cols = ['interes_google_promedio']
+                optional_cols = ['interes_alto']
+                
+                # INICIALIZAR available_cols SOLO CON indice_tiempo UNA VEZ
+                available_cols = ['indice_tiempo']
+                
+                # Verificar columnas requeridas - SIN AGREGAR indice_tiempo NUEVAMENTE
+                for col in required_cols:
+                    if col in df_trends.columns:
+                        available_cols.append(col)
+                        logger.info(f"✅ Columna requerida encontrada: {col}")
+                    else:
+                        logger.error(f"❌ Columna requerida faltante: {col}")
+                
+                # Verificar columnas opcionales y crearlas si faltan - SIN AGREGAR indice_tiempo
+                for col in optional_cols:
+                    if col in df_trends.columns:
+                        available_cols.append(col)
+                        logger.info(f"✅ Columna opcional encontrada: {col}")
+                    else:
+                        logger.warning(f"⚠️ Columna opcional faltante: {col} - creándola...")
+                        if col == 'interes_alto' and 'interes_google_promedio' in df_trends.columns:
+                            # Crear variable interes_alto si no existe
+                            median_interest = df_trends['interes_google_promedio'].median()
+                            df_trends['interes_alto'] = (df_trends['interes_google_promedio'] > median_interest).astype(int)
+                            available_cols.append(col)
+                            logger.info(f"✅ Variable interes_alto creada con mediana: {median_interest:.1f}")
+                
+                # VERIFICAR QUE NO HAY DUPLICADOS EN available_cols
+                if len(available_cols) != len(set(available_cols)):
+                    logger.error(f"❌ available_cols tiene duplicados: {available_cols}")
+                    available_cols = list(dict.fromkeys(available_cols))  # Remover duplicados manteniendo orden
+                    logger.info(f"✅ available_cols limpiado: {available_cols}")
+                
+                logger.info(f"📋 Columnas finales para merge: {available_cols}")
+                
+                # Verificar que todas las columnas existen en df_trends
+                missing_cols = [col for col in available_cols if col not in df_trends.columns]
+                if missing_cols:
+                    logger.error(f"❌ Columnas faltantes en df_trends: {missing_cols}")
+                    logger.error(f"📋 Columnas disponibles: {list(df_trends.columns)}")
+                    # Remover columnas faltantes
+                    available_cols = [col for col in available_cols if col in df_trends.columns]
+                    logger.info(f"✅ Columnas ajustadas para merge: {available_cols}")
+                
+                if len(available_cols) < 2:  # Debe tener al menos indice_tiempo + 1 columna de datos
+                    logger.error("❌ No hay suficientes columnas válidas para el merge")
+                    df_final["interes_google_promedio"] = None
+                    df_final["interes_alto"] = None
+                else:
+                    # Asegurar tipos string para merge
+                    df_final['indice_tiempo'] = df_final['indice_tiempo'].astype(str)
+                    df_trends['indice_tiempo'] = df_trends['indice_tiempo'].astype(str)
+                    
+                    # VERIFICAR QUE df_final NO TIENE DUPLICADOS ANTES DEL MERGE TRENDS
+                    if df_final.columns.duplicated().any():
+                        logger.error(f"❌ df_final tiene columnas duplicadas antes del merge Trends")
+                        df_final = df_final.loc[:, ~df_final.columns.duplicated()]
+                    
+                    # VERIFICAR QUE df_trends NO TIENE DUPLICADOS EN LAS COLUMNAS SELECCIONADAS
+                    df_trends_subset = df_trends[available_cols]
+                    if df_trends_subset.columns.duplicated().any():
+                        logger.error(f"❌ df_trends subset tiene columnas duplicadas")
+                        df_trends_subset = df_trends_subset.loc[:, ~df_trends_subset.columns.duplicated()]
+                        available_cols = list(df_trends_subset.columns)
+                        logger.info(f"✅ df_trends subset limpiado: {available_cols}")
+                    
+                    # Merge Google Trends solo con columnas disponibles
+                    try:
+                        logger.info(f"🔗 Iniciando merge con df_trends usando columnas: {available_cols}")
+                        logger.info(f"📊 df_final shape antes del merge: {df_final.shape}")
+                        logger.info(f"📊 df_trends_subset shape: {df_trends_subset.shape}")
+                        
+                        df_final = df_final.merge(
+                            df_trends_subset, 
+                            on="indice_tiempo", 
+                            how="left"
+                        )
+                        logger.info(f"✅ Merge Google Trends exitoso. Columnas finales: {list(df_final.columns)}")
+                        logger.info(f"📊 df_final shape después del merge: {df_final.shape}")
+                        
+                    except Exception as trends_error:
+                        logger.error(f"❌ Error en merge Google Trends: {trends_error}")
+                        logger.error(f"📋 df_final columns: {list(df_final.columns)}")
+                        logger.error(f"📋 df_trends_subset columns: {list(df_trends_subset.columns)}")
+                        logger.error(f"📋 available_cols: {available_cols}")
+                        
+                        # Fallback: agregar columnas vacías
+                        df_final["interes_google_promedio"] = None
+                        df_final["interes_alto"] = None
+                
+                trends_matches = df_final['interes_google_promedio'].notna().sum() if 'interes_google_promedio' in df_final.columns else 0
+                logger.info(f"✅ Merge Google Trends completado: {trends_matches}/{len(df_final)} meses con datos de interés")
+                
+                # Verificar si tenemos la columna interes_alto después del merge
+                if 'interes_alto' not in df_final.columns and 'interes_google_promedio' in df_final.columns:
+                    logger.info("📈 Creando variable interes_alto en dataset final...")
+                    median_final = df_final['interes_google_promedio'].median()
+                    df_final['interes_alto'] = (df_final['interes_google_promedio'] > median_final).astype(int)
+                    logger.info(f"✅ Variable interes_alto creada en dataset final con mediana: {median_final:.1f}")
+                
+            else:
                 logger.error(f"❌ Archivo Google Trends no existe: {trends_path}")
                 df_final["interes_google_promedio"] = None
                 df_final["interes_alto"] = None
-            else:
-                df_trends = pd.read_csv(trends_path)
-                
-                logger.info(f"📊 Datos Google Trends leídos: {len(df_trends)} trimestres")
-                logger.info(f"📋 Columnas Google Trends: {list(df_trends.columns)}")
-                logger.info(f"🔍 Muestra índice_tiempo Trends: {sorted(df_trends['indice_tiempo'].unique())[:5]}")
-                logger.info(f"📈 Muestra interés: {df_trends['interes_google_promedio'].head().tolist()}")
-                
-                # Asegurar que ambos índices sean string para el merge
-                df_final['indice_tiempo'] = df_final['indice_tiempo'].astype(str)
-                df_trends['indice_tiempo'] = df_trends['indice_tiempo'].astype(str)
-                
-                # Realizar merge con Google Trends
-                df_final_before_trends = df_final.copy()
-                df_final = df_final.merge(
-                    df_trends[['indice_tiempo', 'interes_google_promedio', 'interes_alto']], 
-                    on="indice_tiempo", 
-                    how="left"
-                )
-                
-                # Verificar resultado del merge
-                trends_matches = df_final['interes_google_promedio'].notna().sum()
-                total_rows = len(df_final)
-                
-                logger.info(f"✅ Merge Google Trends completado: {trends_matches}/{total_rows} trimestres con datos de interés")
-                
-                if trends_matches == 0:
-                    logger.error("❌ PROBLEMA: Ningún registro de Google Trends se mergeó correctamente")
-                    logger.info("🔍 Diagnóstico del merge Google Trends:")
-                    logger.info(f"   - Índices únicos turismo: {sorted(df_final_before_trends['indice_tiempo'].unique())}")
-                    logger.info(f"   - Índices únicos Trends: {sorted(df_trends['indice_tiempo'].unique())}")
-                    
-                    common_indices = set(df_final_before_trends['indice_tiempo'].unique()) & set(df_trends['indice_tiempo'].unique())
-                    logger.info(f"   - Índices en común: {sorted(common_indices)}")
-                else:
-                    logger.info(f"✅ MERGE GOOGLE TRENDS EXITOSO: {trends_matches} trimestres con datos de interés sincronizados")
-        
         else:
             logger.warning("⚠️ No hay datos de Google Trends procesados disponibles")
             df_final["interes_google_promedio"] = None
             df_final["interes_alto"] = None
 
-        # Agregar variables temporales y eventos
-        def extraer_año_trimestre(indice_tiempo):
-            if isinstance(indice_tiempo, str) and "Q" in indice_tiempo:
-                año, q = indice_tiempo.split("Q")
-                return int(año), int(q)
+        # Agregar variables temporales MENSUALES
+        def extraer_año_mes(indice_tiempo):
+            if isinstance(indice_tiempo, str) and "-" in indice_tiempo:
+                año, mes = indice_tiempo.split("-")
+                return int(año), int(mes)
             return None, None
 
-        df_final[['año', 'trimestre']] = df_final['indice_tiempo'].apply(
-            lambda x: pd.Series(extraer_año_trimestre(x))
+        df_final[['año', 'mes']] = df_final['indice_tiempo'].apply(
+            lambda x: pd.Series(extraer_año_mes(x))
         )
 
-        # Variables estacionales
-        df_final['es_verano'] = (df_final['trimestre'] == 1).astype(int)
-        df_final['es_otoño'] = (df_final['trimestre'] == 2).astype(int)
-        df_final['es_invierno'] = (df_final['trimestre'] == 3).astype(int)
-        df_final['es_primavera'] = (df_final['trimestre'] == 4).astype(int)
+        # Variables estacionales MENSUALES
+        meses_nombres = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
+        for i in range(1, 13):
+            df_final[f'es_{meses_nombres[i-1]}'] = (df_final['mes'] == i).astype(int)
 
-        # Eventos importantes específicos de Mendoza
-        eventos = {
-            1: "Vendimia + Verano",
-            2: "Otoño tranquilo",
-            3: "Invierno + Esquí",
-            4: "Primavera + Fiestas"
-        }
-        
-        df_final["evento_importante"] = df_final["trimestre"].map(eventos).fillna("Sin evento específico")
-        
-        # Variable de temporada turística
-        df_final['temporada_alta'] = df_final['trimestre'].isin([1, 3]).astype(int)
-        df_final['temporada_vendimia'] = (df_final['trimestre'] == 1).astype(int)
+        # Variables de eventos Mendoza MENSUALES
+        df_final['mes_vendimia'] = df_final['mes'].isin([2, 3]).astype(int)  # Feb-Mar
+        df_final['vacaciones_invierno'] = df_final['mes'].isin([7, 8]).astype(int)  # Jul-Ago
+        df_final['temporada_alta'] = df_final['mes'].isin([1, 2, 3, 7, 8, 12]).astype(int)
 
-        # Ordenar por indice_tiempo para presentación final
+        # Ordenar por tiempo
         df_final = df_final.sort_values('indice_tiempo')
 
-        # DEBUG: Verificar contenido final antes de guardar
-        logger.info("🔍 VERIFICACIÓN FINAL DEL DATASET CON GOOGLE TRENDS:")
-        logger.info(f"   - Total filas: {len(df_final)}")
-        logger.info(f"   - Columnas: {list(df_final.columns)}")
-        
-        # Verificar USD
-        if 'precio_promedio_usd' in df_final.columns:
-            usd_not_null = df_final['precio_promedio_usd'].notna().sum()
-            logger.info(f"   - Datos USD no nulos: {usd_not_null}/{len(df_final)}")
-        
-        # Verificar Google Trends
-        if 'interes_google_promedio' in df_final.columns:
-            trends_not_null = df_final['interes_google_promedio'].notna().sum()
-            logger.info(f"   - Datos Google Trends no nulos: {trends_not_null}/{len(df_final)}")
-            if trends_not_null > 0:
-                logger.info(f"   - Rango interés Google: {df_final['interes_google_promedio'].min():.1f} - {df_final['interes_google_promedio'].max():.1f}")
-                logger.info(f"   - Muestra Google Trends: {df_final[['indice_tiempo', 'interes_google_promedio']].head()}")
+        # VERIFICACIÓN FINAL ANTES DE GUARDAR
+        if df_final.columns.duplicated().any():
+            logger.error(f"❌ df_final FINAL tiene columnas duplicadas")
+            logger.error(f"📋 Columnas duplicadas: {df_final.columns[df_final.columns.duplicated()].tolist()}")
+            df_final = df_final.loc[:, ~df_final.columns.duplicated()]
+            logger.info(f"✅ df_final FINAL limpiado: {list(df_final.columns)}")
 
-        # Guardar archivo final
+        # Guardar archivo final MENSUAL
         local_data_dir = Path("/usr/local/airflow/data/raw")
         local_data_dir.mkdir(parents=True, exist_ok=True)
-        output_path = local_data_dir / "mendoza_turismo_final_con_usd.csv"
+        output_path = local_data_dir / "mendoza_turismo_final_mensual.csv"
         
         df_final.to_csv(output_path, index=False, encoding="utf-8")
-        logger.info(f"💾 Dataset guardado en: {output_path}")
-
-        # Verificar que el archivo se guardó correctamente
-        if output_path.exists():
-            # Leer el archivo guardado para verificar
-            df_verificacion = pd.read_csv(output_path)
-            logger.info(f"✅ Verificación post-guardado: {len(df_verificacion)} filas, {len(df_verificacion.columns)} columnas")
-            
-            if 'precio_promedio_usd' in df_verificacion.columns:
-                usd_guardado = df_verificacion['precio_promedio_usd'].notna().sum()
-                logger.info(f"💰 USD en archivo guardado: {usd_guardado} registros no nulos")
-            else:
-                logger.error("❌ Columna precio_promedio_usd NO se guardó en el archivo final")
-        else:
-            logger.error(f"❌ Error: archivo no se guardó en {output_path}")
-
-        # Crear resumen del dataset final - ACTUALIZADO CON GOOGLE TRENDS
-        def convert_numpy_types(obj):
-            """Convierte tipos numpy a tipos Python nativos para JSON serialization"""
-            if isinstance(obj, (pd.Int64Dtype, pd.Float64Dtype)):
-                return obj.item()
-            elif hasattr(obj, 'item'):
-                return obj.item()
-            elif isinstance(obj, dict):
-                return {k: convert_numpy_types(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_numpy_types(v) for v in obj]
-            else:
-                return obj
-
-        summary = {
-            "creation_timestamp": datetime.now().isoformat(),
-            "total_quarters": int(len(df_final)),
-            "date_range": f"{df_final['indice_tiempo'].min()} - {df_final['indice_tiempo'].max()}",
-            "tourism_data_summary": {
-                "total_tourists_avg": int(df_final['turistas_no_residentes_total'].mean()),
-                "min_quarter": str(df_final.loc[df_final['turistas_no_residentes_total'].idxmin(), 'indice_tiempo']),
-                "max_quarter": str(df_final.loc[df_final['turistas_no_residentes_total'].idxmax(), 'indice_tiempo']),
-                "seasonal_pattern": "Q1 y Q3 típicamente más altos (Vendimia y Vacaciones de Invierno)"
-            },
-            "usd_data_summary": {
-                "has_usd_data": usd_quarterly.get("status") == "processed",
-                "avg_usd_price": float(df_final['precio_promedio_usd'].mean()) if 'precio_promedio_usd' in df_final and df_final['precio_promedio_usd'].notna().any() else None,
-                "usd_quarters_coverage": f"{int(df_final['precio_promedio_usd'].notna().sum())}/{int(len(df_final))}" if 'precio_promedio_usd' in df_final else "0/0",
-                "usd_data_found": int(df_final['precio_promedio_usd'].notna().sum()) if 'precio_promedio_usd' in df_final else 0
-            },
-            "google_trends_summary": {
-                "has_trends_data": trends_quarterly.get("status") == "processed",
-                "avg_interest": float(df_final['interes_google_promedio'].mean()) if 'interes_google_promedio' in df_final and df_final['interes_google_promedio'].notna().any() else None,
-                "trends_quarters_coverage": f"{int(df_final['interes_google_promedio'].notna().sum())}/{int(len(df_final))}" if 'interes_google_promedio' in df_final else "0/0",
-                "trends_data_found": int(df_final['interes_google_promedio'].notna().sum()) if 'interes_google_promedio' in df_final else 0
-            },
-            "features_available": list(df_final.columns),
-            "ready_for_modeling": True,
-            "recommended_target": "turistas_no_residentes_total",
-            "key_predictors": [
-                "precio_promedio_usd", "interes_google_promedio", "temporada_alta", 
-                "temporada_vendimia", "año", "interes_alto"
-            ]
-        }
-
-        # Aplicar conversión a todos los valores
-        summary = convert_numpy_types(summary)
-
-        summary_path = local_data_dir / "dataset_final_summary.json"
-        with open(summary_path, 'w', encoding='utf-8') as f:
-            json.dump(summary, f, indent=2, ensure_ascii=False)
-
+        
         logger.info("=" * 70)
-        logger.info("📊 DATASET FINAL CREADO CON ÉXITO (USD + GOOGLE TRENDS)")
+        logger.info("📊 DATASET FINAL MENSUAL CREADO CON ÉXITO - SIN DUPLICADOS")
         logger.info("=" * 70)
         logger.info(f"📁 Archivo: {output_path}")
-        logger.info(f"📅 Trimestres: {len(df_final)}")
-        logger.info(f"🗓️ Rango: {summary['date_range']}")
+        logger.info(f"📅 Meses: {len(df_final)}")
+        logger.info(f"🗓️ Rango: {df_final['indice_tiempo'].min()} - {df_final['indice_tiempo'].max()}")
         logger.info(f"🎯 Variables: {len(df_final.columns)}")
-        logger.info(f"💰 Datos USD: {'SÍ' if summary['usd_data_summary']['has_usd_data'] else 'NO'}")
-        logger.info(f"📈 Datos Google Trends: {'SÍ' if summary['google_trends_summary']['has_trends_data'] else 'NO'}")
+        logger.info(f"📊 Fuentes ETI: {len([col for col in df_final.columns if col.startswith('turistas_')])}")
+        logger.info(f"📊 Total turistas general: {df_final['turistas_no_residentes_total'].sum():.2f}")
         
-        if summary['usd_data_summary']['has_usd_data']:
-            if summary['usd_data_summary']['avg_usd_price'] is not None:
-                logger.info(f"💵 Precio USD promedio: ${summary['usd_data_summary']['avg_usd_price']:.2f}")
-            logger.info(f"📊 Cobertura USD: {summary['usd_data_summary']['usd_quarters_coverage']}")
+        # Verificación final de datos por fuente
+        turistas_cols_final = [col for col in df_final.columns if col.startswith("turistas_")]
+        usd_cols_final = [col for col in df_final.columns if col.startswith("precio_") or col.startswith("variacion_")]
         
-        if summary['google_trends_summary']['has_trends_data']:
-            if summary['google_trends_summary']['avg_interest'] is not None:
-                logger.info(f"📈 Interés Google promedio: {summary['google_trends_summary']['avg_interest']:.1f}")
-            logger.info(f"📊 Cobertura Google Trends: {summary['google_trends_summary']['trends_quarters_coverage']}")
+        for col in turistas_cols_final:
+            total = df_final[col].sum()
+            registros_no_zero = (df_final[col] > 0).sum()
+            logger.info(f"  📊 {col}: {total:.2f} turistas totales ({registros_no_zero} meses con datos)")
         
-        logger.info("✅ LISTO PARA MODELADO PREDICTIVO AVANZADO")
+        for col in usd_cols_final:
+            if col in df_final.columns:
+                valores_validos = df_final[col].notna().sum()
+                promedio = df_final[col].mean() if valores_validos > 0 else 0
+                logger.info(f"  💰 {col}: promedio ${promedio:.2f} ({valores_validos} meses con datos)")
+        
+        logger.info("✅ LISTO PARA MODELADO PREDICTIVO MENSUAL - TODAS LAS FUENTES INCLUIDAS CON VARIACIÓN USD")
         logger.info("=" * 70)
 
         return str(output_path)
 
     except Exception as e:
-        logger.error(f"❌ Error creando dataset final con USD y Google Trends: {e}")
+        logger.error(f"❌ Error creando dataset final mensual: {e}")
         import traceback
         logger.error(f"Traceback completo: {traceback.format_exc()}")
         return ""
 
-    # ─── DAG Definition Mejorado ───────────────────────────────────────────────────
+# ─── DAG Definition Mejorado ───────────────────────────────────────────────────
 
 with DAG(
     dag_id="mza_turismo_etl_enhanced",
@@ -1874,16 +2167,15 @@ with DAG(
     # 3. Descarga USD desde argentinadatos.com
     usd_historical = download_usd_historical_dolarapi(directories=dirs)
     
-    # 4. Procesar USD a promedios trimestrales
-    usd_quarterly = process_usd_to_quarterly_averages(
+    # 4. Procesar USD a promedios MENSUALES (renamed)
+    usd_monthly = process_usd_to_monthly_averages(
         usd_data=usd_historical,
         directories=dirs
     )
 
-    # 5. Procesar Google Trends (solo si hay descargas de trends)
+    # 5. Procesar Google Trends MENSUAL (renamed)
     if trends_downloads:
-        # Tomar el primer (y único) resultado de Google Trends
-        trends_quarterly = process_google_trends_to_quarterly(
+        trends_monthly = process_google_trends_to_monthly(
             trends_data=trends_downloads[0],
             directories=dirs
         )
@@ -1893,7 +2185,7 @@ with DAG(
         def no_trends_available():
             return {"status": "error", "error": "No Google Trends configured"}
         
-        trends_quarterly = no_trends_available()
+        trends_monthly = no_trends_available()
 
     # 6. Procesamiento tradicional
     processing_result = process_and_standardize_data(
@@ -1901,11 +2193,11 @@ with DAG(
         directories=dirs
     )
 
-    # 7. Dataset final MEJORADO con USD y Google Trends sincronizados
-    final_dataset_enhanced = create_final_mendoza_dataset(
+    # 7. Dataset final MENSUAL (renamed)
+    final_dataset_monthly = create_final_monthly_dataset(
         processing_summary=processing_result,
-        usd_quarterly=usd_quarterly,
-        trends_quarterly=trends_quarterly,  # Nuevo parámetro
+        usd_monthly=usd_monthly,
+        trends_monthly=trends_monthly,
         directories=dirs
     )
 
@@ -1932,20 +2224,20 @@ with DAG(
         dirs >> download_task
     
     # USD processing
-    usd_historical >> usd_quarterly
+    usd_historical >> usd_monthly
     
     # Google Trends processing (solo si hay trends_downloads)
     if trends_downloads:
-        trends_downloads[0] >> trends_quarterly
+        trends_downloads[0] >> trends_monthly
     
     # Processing depende de todas las descargas completadas
     for download_task in csv_downloads + api_downloads + trends_downloads:
         download_task >> processing_result
     
     # Dataset final depende de processing, USD y Trends
-    processing_result >> final_dataset_enhanced
-    usd_quarterly >> final_dataset_enhanced
-    trends_quarterly >> final_dataset_enhanced
+    processing_result >> final_dataset_monthly
+    usd_monthly >> final_dataset_monthly
+    trends_monthly >> final_dataset_monthly
     
     # Validation depende de todas las descargas y processing
     for download_task in csv_downloads + api_downloads + trends_downloads:

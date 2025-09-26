@@ -1,8 +1,8 @@
-# Configuración optimizada para pipeline de demanda hotelera Mendoza v2.3
-# Fuentes principales: ETI Mendoza + argentinadatos.com
+# Configuración optimizada para pipeline de demanda hotelera Mendoza v3.0 - MENSUAL
+# Fuentes principales: ETI Nacional + argentinadatos.com
 
 # -------------------------------
-# Turismo (ETI - CSVs directos)  
+# Turismo (ETI - CSVs directos) - EXPANDIDO 
 # -------------------------------
 eti_aeropuerto:
   dataset_name: "eti_mendoza_aeropuerto_turistas_no_residentes"
@@ -10,6 +10,7 @@ eti_aeropuerto:
   type: "direct_csv"
   min_bytes: 2000
   category: "turismo"
+  frequency: "trimestral"
   enabled: true
 
 eti_cristo_redentor:
@@ -18,6 +19,35 @@ eti_cristo_redentor:
   type: "direct_csv"
   min_bytes: 2000
   category: "turismo"
+  frequency: "trimestral"
+  enabled: true
+
+# NUEVAS FUENTES ETI - Nacional
+eti_ezeiza_aeroparque:
+  dataset_name: "eti_ezeiza_aeroparque_turistas_no_residentes"
+  api_url: "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/32cd65c4-7558-48cf-a8ac-bbb07147b5a1/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_ezeiza_aeroparque_mensual.csv"
+  type: "direct_csv"
+  min_bytes: 2000
+  category: "turismo"
+  frequency: "mensual"
+  enabled: true
+
+eti_cordoba_aeropuerto:
+  dataset_name: "eti_cordoba_aeropuerto_turistas_no_residentes"
+  api_url: "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/dae8b7f8-f3dc-431b-887e-3de4b54f09a9/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_aeropuerto_cordoba_trimes.csv"
+  type: "direct_csv"
+  min_bytes: 2000
+  category: "turismo"
+  frequency: "trimestral"
+  enabled: true
+
+eti_puerto_buenos_aires:
+  dataset_name: "eti_puerto_buenos_aires_turistas_no_residentes"
+  api_url: "https://datos.yvera.gob.ar/dataset/78b880c1-50d5-4a0c-9c87-7350e70548c2/resource/6ca84a56-8006-435b-8062-e00868263174/download/turistas_pernoctes_estadia_media_turistas_no_residentes_por_residencia_puerto_buenos_aires_trime.csv"
+  type: "direct_csv"
+  min_bytes: 2000
+  category: "turismo"
+  frequency: "trimestral"
   enabled: true
 
 # -------------------------------
@@ -28,12 +58,23 @@ usd_dolarapi:
   api_url: "https://api.argentinadatos.com/v1/cotizaciones/dolares/"
   type: "api_json"
   min_bytes: 5000
-  description: "Cotización USD histórica desde argentinadatos.com (filtrado por oficial desde 2018)"
+  description: "Cotización USD histórica desde argentinadatos.com (filtrado por oficial desde 2014)"
   category: "economico"
   enabled: true
 
 # -------------------------------
-# Configuración del pipeline
+# Google Trends - MENSUAL
+# -------------------------------
+google_trends:
+  enabled: true
+  search_term: "Mendoza"
+  geo: "AR"  # Argentina
+  min_bytes: 1000
+  description: "Interés de búsqueda en Google para 'Mendoza' en Argentina - MENSUAL"
+  date_from: "2014-01-01"
+
+# -------------------------------
+# Configuración del pipeline - ACTUALIZADA MENSUAL
 # -------------------------------
 defaults:
   timeout_seconds: 180
@@ -41,6 +82,7 @@ defaults:
   max_retries: 3
   min_rows_per_table: 3
   enable_small_files: true
+  start_date: "2014-01-01"  # NUEVA FECHA INICIO
 
 validation:
   enable_data_quality_checks: true
@@ -51,7 +93,7 @@ validation:
   # Validaciones específicas por fuente
   eti_validation:
     required_columns: ["indice_tiempo", "turistas_no_residentes"]
-    min_records_per_quarter: 1
+    min_records_per_month: 1
     
   usd_validation:
     min_price: 10.0
@@ -60,10 +102,10 @@ validation:
     require_recent_data: true
 
 # -------------------------------
-# Agregación y procesamiento
+# Agregación y procesamiento - MENSUAL
 # -------------------------------
 aggregation:
-  target_frequency: "quarterly"
+  target_frequency: "monthly"  # CAMBIO PRINCIPAL
   
   usd_aggregation:
     methods: ["mean", "min", "max", "std"]
@@ -75,11 +117,12 @@ aggregation:
     methods: ["sum", "mean"]
     calculate_growth: true
     seasonal_adjustment: true
-    lag_periods: [1, 4]
+    lag_periods: [1, 12]  # 1 mes y 1 año
+    quarterly_to_monthly_division: 3  # Dividir datos trimestrales por 3
 
 feature_engineering:
   seasonal_variables: true
-  lag_periods: [1, 4]
+  lag_periods: [1, 12]  # Mensual
   
   # Variables derivadas automáticas
   derived_variables:
@@ -87,40 +130,53 @@ feature_engineering:
     tourism_categories: ["muy_bajo", "bajo", "medio", "alto", "muy_alto"]
     volatility_threshold: 5.0
   
-  # Variables de eventos específicas de Mendoza
+  # Variables de eventos específicas de Mendoza - MENSUAL
   mendoza_events:
-    vendimia_quarter: 1
-    winter_vacation_quarter: 3
-    high_season_quarters: [1, 3]
+    vendimia_months: [2, 3]  # Febrero-Marzo
+    winter_vacation_months: [7, 8]  # Julio-Agosto
+    high_season_months: [1, 2, 3, 7, 8, 12]
 
 # -------------------------------
-# Configuración de salida
+# Configuración de salida - MENSUAL (LIMPIADO)
 # -------------------------------
 output_config:
-  final_dataset_name: "mendoza_turismo_final_con_usd.csv"
+  final_dataset_name: "mendoza_turismo_final_mensual.csv"
   summary_report: true
   feature_matrix: true
-  quarterly_aggregation: true
+  monthly_aggregation: true
   
   columns_order:
     - "indice_tiempo"
     - "año"
-    - "trimestre"
+    - "mes"
     - "turistas_no_residentes_total"
-    - "turistas_aeropuerto"
-    - "turistas_cristo"
+    - "turistas_mendoza_aeropuerto"
+    - "turistas_mendoza_cristo"
+    - "turistas_ezeiza_aeroparque"
+    - "turistas_cordoba"
+    - "turistas_puerto_bs_as"
     - "precio_promedio_usd"
     - "usd_alto"
+    - "interes_google_promedio"
+    - "interes_alto"
     - "temporada_alta"
-    - "temporada_vendimia"
-    - "evento_importante"
-    - "es_verano"
-    - "es_otoño"
-    - "es_invierno"
-    - "es_primavera"
+    - "mes_vendimia"
+    - "vacaciones_invierno"
+    - "es_enero"
+    - "es_febrero"
+    - "es_marzo"
+    - "es_abril"
+    - "es_mayo"
+    - "es_junio"
+    - "es_julio"
+    - "es_agosto"
+    - "es_septiembre"
+    - "es_octubre"
+    - "es_noviembre"
+    - "es_diciembre"
 
 # -------------------------------
-# Configuración de logs
+# Configuración de logs mejorada
 # -------------------------------
 logging_config:
   enable_detailed_logs: true
@@ -132,63 +188,7 @@ logging_config:
     - "data_quality_score"
     - "usd_data_coverage"
     - "tourism_data_completeness"
-  fallback_type: "direct_csv"
-  min_bytes: 5000
-  description: "Datos turísticos INDEC con URL dinámica"
-  enabled: false  # Deshabilitado por ahora
-
-# -------------------------------
-# Configuración de salida (unificada)
-# -------------------------------
-output_config:
-  final_dataset_name: "mendoza_turismo_final_con_usd.csv"
-  summary_report: true
-  feature_matrix: true
-  quarterly_aggregation: true
-  
-  # Orden de columnas en dataset final (versión definitiva)
-  columns_order:
-    - "indice_tiempo"
-    - "año"
-    - "trimestre"
-    - "turistas_no_residentes_total"
-    - "turistas_aeropuerto"
-    - "turistas_cristo"
-    - "precio_promedio_usd"
-    - "volatilidad_usd"
-    - "precio_min_usd"
-    - "precio_max_usd"
-    - "temporada_alta"
-    - "temporada_vendimia"
-    - "evento_importante"
-    - "turistas_lag1"
-    - "turistas_crecimiento"
-    - "usd_alto"
-    - "usd_muy_volatil"
-    - "es_verano"
-    - "es_invierno"
-  search_pattern: "turismo.*\\.csv$"
-  type: "dynamic_url"
-  fallback_type: "direct_csv"
-  min_bytes: 5000
-  description: "Datos turísticos INDEC con URL dinámica"
-  enabled: false  # Deshabilitado por ahora
-
-# -------------------------------
-# Configuración de salida NUEVA
-# -------------------------------
-output_config:
-  final_dataset_name: "mendoza_turismo_final_con_usd.csv"
-  summary_report: true
-  feature_matrix: true
-  quarterly_aggregation: true
-  
-  columns_order:
-    - "indice_tiempo"
-    - "año"
-    - "trimestre"
-    - "turistas_no_residentes_total"
-    - "turistas_aeropuerto"
+    - "quarterly_division_applied"  # NUEVA métrica
     - "turistas_cristo"
     - "precio_promedio_usd"
     - "volatilidad_usd"

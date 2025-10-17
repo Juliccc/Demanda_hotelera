@@ -241,35 +241,33 @@ def download_direct_csv_enhanced(
         
         # Validación mejorada para archivos pequeños
         if total_size < min_bytes:
-            # No eliminar automáticamente, sino verificar contenido
-            logger.warning(f"⚠️ Archivo pequeño detectado: {name} - {total_size} bytes (mínimo: {min_bytes})")
-            
-            # Verificar si es un archivo CSV válido con datos
+            logger.warning(f"⚠️ Archivo pequeño detectado: {name} - {total_size} bytes")
             try:
                 df_test = pd.read_csv(dest_path)
                 if len(df_test) > 0 and len(df_test.columns) > 2:
-                    logger.info(f"✅ Archivo pequeño pero válido: {len(df_test)} filas, {len(df_test.columns)} columnas")
+                    logger.info(f"✅ Archivo pequeño pero válido: {len(df_test)} filas")
                     return {
                         "src": src, "name": name, "path": str(dest_path),
-                        "size": total_size, "status": "downloaded_small_valid", "url": url,
+                        "size": total_size, "status": "downloaded", "url": url,  # ✅ CAMBIO: siempre "downloaded"
                         "description": spec["description"], "category": category,
-                        "validation": f"{len(df_test)} filas válidas"
+                        "frequency": frequency
                     }
                 else:
-                    logger.error(f"❌ Archivo muy pequeño con pocos datos: {len(df_test)} filas")
+                    logger.error(f"❌ Archivo muy pequeño: {len(df_test)} filas")
                     dest_path.unlink()
-                    raise ValueError(f"Archivo con datos insuficientes: {len(df_test)} filas")
+                    raise ValueError(f"Datos insuficientes: {len(df_test)} filas")
             except Exception as e:
-                logger.error(f"❌ Error validando archivo pequeño: {e}")
+                logger.error(f"❌ Error validando: {e}")
                 dest_path.unlink()
-                raise ValueError(f"Archivo muy pequeño y no válido: {total_size} < {min_bytes} bytes")
+                raise
         
-        logger.info(f"✅ Descarga exitosa: {name} - {total_size:,} bytes - Frecuencia: {frequency}")
+        logger.info(f"✅ Descarga exitosa: {name} - {total_size:,} bytes")
         
         return {
             "src": src, "name": name, "path": str(dest_path),
             "size": total_size, "status": "downloaded", "url": url,
-            "description": spec["description"], "category": category
+            "description": spec["description"], "category": category,
+            "frequency": frequency  # ✅ CRÍTICO: incluir frecuencia
         }
         
     except Exception as e:
@@ -531,8 +529,9 @@ def process_and_standardize_data(
     all_downloads: List[Any],
     directories: Dict[str, str]
 ) -> Dict[str, Any]:
-    """Procesa y estandariza todos los datos descargados - MODIFICADO para agrupar por PAÍS DE ORIGEN."""
+    """Procesa y estandariza todos los datos descargados - DEBUG EZEIZA."""
     try:
+        # APLANAR LISTA DE DESCARGAS
         files = []
         for download in all_downloads:
             if isinstance(download, list):
@@ -540,9 +539,17 @@ def process_and_standardize_data(
             else:
                 files.append(download)
         
-        logger.info(f"📥 Total archivos descargados: {len(files)}")
-        for file_info in files:
-            logger.info(f"  📄 {file_info.get('name', 'unknown')}: {file_info.get('status', 'unknown')} - {file_info.get('category', 'unknown')} - Freq: {file_info.get('frequency', 'N/A')}")
+        logger.info(f"{'='*70}")
+        logger.info(f"📥 TOTAL ARCHIVOS RECIBIDOS PARA PROCESAR: {len(files)}")
+        logger.info(f"{'='*70}")
+        
+        # LOG DETALLADO de TODOS los archivos recibidos
+        for idx, file_info in enumerate(files, 1):
+            logger.info(f"{idx}. 📄 {file_info.get('name', 'unknown')}")
+            logger.info(f"   - Status: {file_info.get('status', 'unknown')}")
+            logger.info(f"   - Source: {file_info.get('src', 'unknown')}")
+            logger.info(f"   - Category: {file_info.get('category', 'unknown')}")
+            logger.info(f"   - Frequency: {file_info.get('frequency', 'unknown')}")
         
         processed_files = {
             "turismo": [],
@@ -554,12 +561,21 @@ def process_and_standardize_data(
         
         processed_dir = Path(directories["processed"])
         
-        def expand_quarterly_to_monthly_by_country(df, fecha_col, turistas_col, pais_col, file_name):
-            """
-            Expande datos trimestrales a mensuales por país de origen, distribuyendo el valor 
-            trimestral en los 3 meses correspondientes - CON TRUNCAMIENTO A ENTEROS POR PAÍS.
-            """
-            logger.info(f"🔄 Expandiendo datos trimestrales a mensuales POR PAÍS para {file_name}")
+        # Mapeo de fuentes ETI a puntos de entrada
+        PUNTO_ENTRADA_MAP = {
+            "eti_aeropuerto": "Aeropuerto Mendoza",
+            "eti_cristo_redentor": "Paso Cristo Redentor",
+            "eti_ezeiza_aeroparque": "Aeropuerto Buenos Aires",
+            "eti_cordoba_aeropuerto": "Aeropuerto Córdoba",
+            "eti_puerto_buenos_aires": "Puerto Buenos Aires"
+        }
+        
+        logger.info(f"🗺️ Puntos de entrada configurados: {list(PUNTO_ENTRADA_MAP.keys())}")
+        
+        def expand_quarterly_to_monthly_by_country(df, fecha_col, turistas_col, pais_col, punto_entrada, file_name):
+            """Expande datos trimestrales a mensuales."""
+            logger.info(f"🔄 Expandiendo TRIMESTRAL→MENSUAL para {punto_entrada}")
+            logger.info(f"   📊 Registros originales: {len(df)}")
             
             expanded_rows = []
             
@@ -568,26 +584,20 @@ def process_and_standardize_data(
                 turistas_original = row[turistas_col]
                 pais_origen = row[pais_col]
                 
-                # TRUNCAR a entero después de dividir por 3 (sin decimales) POR PAÍS
                 turistas_por_mes = int(turistas_original / 3)
                 
-                logger.debug(f"📊 {file_name} - {pais_origen}: Trimestre {turistas_original} -> {turistas_por_mes} turistas/mes (truncado)")
-                
-                # Obtener año y trimestre de la fecha
                 año = fecha_trimestre.year
                 mes_inicio = fecha_trimestre.month
                 
-                # Determinar los 3 meses del trimestre
-                if mes_inicio in [1, 2, 3]:  # Q1
+                if mes_inicio in [1, 2, 3]:
                     meses = [1, 2, 3]
-                elif mes_inicio in [4, 5, 6]:  # Q2
+                elif mes_inicio in [4, 5, 6]:
                     meses = [4, 5, 6]
-                elif mes_inicio in [7, 8, 9]:  # Q3
+                elif mes_inicio in [7, 8, 9]:
                     meses = [7, 8, 9]
-                else:  # Q4
+                else:
                     meses = [10, 11, 12]
                 
-                # Crear una fila para cada mes del trimestre MANTENIENDO EL PAÍS
                 for mes in meses:
                     fecha_mensual = pd.Timestamp(year=año, month=mes, day=1)
                     indice_mensual = fecha_mensual.strftime('%Y-%m')
@@ -595,250 +605,324 @@ def process_and_standardize_data(
                     expanded_rows.append({
                         fecha_col: fecha_mensual,
                         turistas_col: turistas_por_mes,
-                        pais_col: pais_origen,  # MANTENER PAÍS DE ORIGEN
+                        pais_col: pais_origen,
+                        'punto_entrada': punto_entrada,
                         'indice_tiempo': indice_mensual,
                         'fecha_std': fecha_mensual
                     })
-                    
-                    logger.debug(f"📅 {file_name} - {pais_origen}: {fecha_trimestre.strftime('%Y-%m')} -> {indice_mensual}: {turistas_por_mes} turistas")
             
             df_expanded = pd.DataFrame(expanded_rows)
-            
-            # Verificar totales por país
-            logger.info(f"✅ {file_name}: Expandido de {len(df)} trimestres a {len(df_expanded)} registros mensuales por país")
-            
-            # Log por país
-            paises_unicos = df_expanded[pais_col].unique()
-            for pais in paises_unicos[:5]:  # Mostrar solo los primeros 5 países
-                total_pais = df_expanded[df_expanded[pais_col] == pais][turistas_col].sum()
-                logger.info(f"📊 {file_name} - {pais}: {total_pais} turistas totales (expandido)")
-            
             df_expanded[turistas_col] = df_expanded[turistas_col].astype(int)
+            
+            logger.info(f"✅ Expandido: {len(df)} → {len(df_expanded)} registros mensuales")
             return df_expanded
+        
+        # CONTADOR
+        archivos_turismo_procesados = 0
+        archivos_turismo_saltados = 0
         
         for file_info in files:
             status = file_info.get("status", "")
+            
+            # ✅ ACEPTAR TANTO "downloaded" COMO "cached"
             if not (status.startswith("downloaded") or status == "cached"):
-                logger.warning(f"⚠️ Saltando archivo con status: {status} - {file_info.get('name', 'unknown')}")
+                logger.warning(f"⚠️ Saltando archivo con status '{status}': {file_info.get('name', 'unknown')}")
+                archivos_turismo_saltados += 1
                 continue
             
             path = file_info.get("path", "")
-            category = file_info.get("category", "general")
+            if not path or not Path(path).exists():
+                logger.error(f"❌ Ruta inválida: {path}")
+                archivos_turismo_saltados += 1
+                continue
             
-            logger.info(f"🔄 Procesando: {file_info.get('name', 'unknown')} - Categoría: {category}")
+            category = file_info.get("category", "general")
+            src = file_info.get("src", "")
+            
+            # 🔍 DETECTAR SI ES EZEIZA PARA DEBUG ULTRA-DETALLADO
+            es_ezeiza = src == "eti_ezeiza_aeroparque"
+            
+            logger.info(f"{'='*60}")
+            logger.info(f"🔄 PROCESANDO: {file_info.get('name', 'unknown')}")
+            logger.info(f"   📂 Categoría: {category}")
+            logger.info(f"   🏷️ Source: {src}")
+            if es_ezeiza:
+                logger.info(f"   🚨 DEBUG MODE: EZEIZA/AEROPARQUE DETECTADO")
             
             try:
                 if path.endswith(".csv"):
                     df = pd.read_csv(path, encoding='utf-8')
+                    logger.info(f"   📊 CSV cargado: {len(df)} filas × {len(df.columns)} columnas")
                     
-                    # Procesar archivos ETI - NUEVA LÓGICA CON PAÍSES DE ORIGEN
-                    if category == "turismo" and any(eti in file_info.get("src", "").lower() for eti in ["eti_", "aeropuerto", "cristo", "ezeiza", "cordoba", "puerto"]):
-                        logger.info(f"📊 Procesando ETI {file_info['name']}: {len(df)} filas, columnas: {list(df.columns)}")
+                    # 🔍 DEBUG EZEIZA: Mostrar TODAS las columnas
+                    if es_ezeiza:
+                        logger.info(f"   🚨 EZEIZA - Columnas completas: {list(df.columns)}")
+                        logger.info(f"   🚨 EZEIZA - Primeras 5 filas:")
+                        for idx, row in df.head(5).iterrows():
+                            logger.info(f"      {idx}: {dict(row)}")
+                    
+                    # PROCESAR ARCHIVOS ETI
+                    if category == "turismo":
+                        logger.info(f"   🎯 Archivo de turismo ETI detectado")
                         
+                        # IDENTIFICAR PUNTO DE ENTRADA
+                        punto_entrada = PUNTO_ENTRADA_MAP.get(src, None)
+                        
+                        if not punto_entrada:
+                            logger.error(f"   ❌ NO se pudo identificar punto_entrada para src='{src}'")
+                            archivos_turismo_saltados += 1
+                            continue
+                        
+                        logger.info(f"   🚪 PUNTO DE ENTRADA: {punto_entrada}")
+                        
+                        # FRECUENCIA
                         frequency = file_info.get("frequency", "unknown")
-                        es_trimestral = frequency == "trimestral" or "trimes" in file_info.get("name", "").lower()
+                        es_trimestral = frequency == "trimestral"
                         
-                        logger.info(f"📅 ETI {file_info['name']} - Frecuencia: {frequency} - Es trimestral: {es_trimestral}")
+                        logger.info(f"   📅 Frecuencia: {frequency} ({'TRIMESTRAL' if es_trimestral else 'MENSUAL'})")
                         
-                        # Buscar columnas necesarias DE MANERA MÁS FLEXIBLE
+                        # BUSCAR COLUMNAS
                         fecha_col = None
                         turistas_col = None
-                        pais_col = None  # NUEVA: columna de país
+                        pais_col = None
                         
-                        # Buscar columna de fecha
+                        logger.info(f"   📋 Columnas disponibles: {list(df.columns)}")
+                        
+                        # Buscar fecha
                         for col in df.columns:
-                            col_lower = col.lower()
-                            if any(date_keyword in col_lower for date_keyword in [
-                                'fecha', 'periodo', 'anio_trimestre', 'trimestre', 'año_trimestre', 
-                                'indice_tiempo_periodo', 'indice_tiempo', 'time', 'date'
-                            ]):
+                            if any(kw in col.lower() for kw in ['indice_tiempo', 'anio_trimestre', 'año_trimestre', 
+                                                                  'trimestre', 'periodo', 'fecha']):
                                 fecha_col = col
+                                logger.info(f"   ✅ Fecha: '{col}'")
                                 break
                         
-                        # Buscar columna de turistas
+                        # Buscar turistas (PRIORIZAR turistas_no_residentes)
                         for col in df.columns:
-                            col_lower = col.lower()
-                            if any(turistas_keyword in col_lower for turistas_keyword in [
-                                'turistas_no_residentes', 'turistas_extranjeros', 'turistas',
-                                'visitantes_no_residentes', 'no_residentes', 'extranjeros', 'visitors'
-                            ]):
+                            if col.lower() == 'turistas_no_residentes':
                                 turistas_col = col
+                                logger.info(f"   ✅ Turistas (EXACTO): '{col}'")
                                 break
                         
-                        # NUEVA: Buscar columna de país/residencia de origen
+                        if not turistas_col:
+                            for col in df.columns:
+                                if any(kw in col.lower() for kw in ['turistas', 'visitantes', 'no_residentes']):
+                                    turistas_col = col
+                                    logger.info(f"   ✅ Turistas: '{col}'")
+                                    break
+                        
+                        # 🔍 DEBUG EZEIZA: Verificar qué columna se eligió
+                        if es_ezeiza:
+                            logger.info(f"   🚨 EZEIZA - Columna turistas seleccionada: '{turistas_col}'")
+                            if turistas_col:
+                                logger.info(f"   🚨 EZEIZA - Tipo de dato: {df[turistas_col].dtype}")
+                                logger.info(f"   🚨 EZEIZA - Valores únicos (muestra): {df[turistas_col].unique()[:10]}")
+                                logger.info(f"   🚨 EZEIZA - Suma TOTAL original: {df[turistas_col].sum():,}")
+                        
+                        # Buscar país
                         for col in df.columns:
-                            col_lower = col.lower()
-                            if any(pais_keyword in col_lower for pais_keyword in [
-                                'residencia', 'pais', 'country', 'origin', 'nacionalidad', 
-                                'procedencia', 'pais_origen', 'lugar_residencia', 'pais_de_residencia'
-                            ]):
+                            if any(kw in col.lower() for kw in ['pais_de_residencia', 'residencia', 'pais', 'country']):
                                 pais_col = col
+                                logger.info(f"   ✅ País: '{col}'")
                                 break
                         
-                        if fecha_col and turistas_col and pais_col:
-                            logger.info(f"✅ ETI {file_info['name']} - Columnas encontradas: fecha='{fecha_col}', turistas='{turistas_col}', país='{pais_col}'")
-                            
-                            # Verificar países únicos disponibles
-                            paises_unicos = df[pais_col].unique()
-                            logger.info(f"🌍 ETI {file_info['name']} - Países únicos encontrados: {len(paises_unicos)}")
-                            logger.info(f"🌍 Primeros países: {list(paises_unicos)[:10]}")
-                            
-                            # Limpiar y normalizar nombres de países
-                            df[pais_col] = df[pais_col].astype(str).str.strip().str.title()
-                            
-                            # Convertir turistas a numérico ANTES de cualquier procesamiento
-                            df[turistas_col] = pd.to_numeric(df[turistas_col], errors='coerce').fillna(0).astype(int)
-                            
-                            logger.info(f"📊 ETI {file_info['name']} - Total registros por país antes de filtros: {len(df)}")
-                            
-                            try:
-                                # Convertir fechas
-                                df[fecha_col] = pd.to_datetime(df[fecha_col], errors='coerce')
-                                df = df[df[fecha_col].notna()]
-                                df = df[df[fecha_col] >= '2014-01-01']
-                                
-                                logger.info(f"✅ ETI {file_info['name']} - Datos después de filtro fecha: {len(df)} registros válidos")
-                                
-                                # EXPANSIÓN TRIMESTRAL A MENSUAL POR PAÍS
-                                if es_trimestral:
-                                    logger.info(f"📊 ETI {file_info['name']} - EXPANDIENDO DATOS TRIMESTRALES A MENSUALES POR PAÍS")
-                                    df = expand_quarterly_to_monthly_by_country(df, fecha_col, turistas_col, pais_col, file_info['name'])
-                                else:
-                                    logger.info(f"📊 ETI {file_info['name']} - Datos mensuales, creando índice temporal")
-                                    df[turistas_col] = df[turistas_col].astype(int)
-                                    df['indice_tiempo'] = df[fecha_col].dt.strftime('%Y-%m')
-                                    df['fecha_std'] = df[fecha_col]
-                                
-                                # Asegurar que todos los turistas sean enteros
-                                df[turistas_col] = df[turistas_col].astype(int)
-                                
-                                logger.info(f"✅ ETI {file_info['name']} - Procesamiento completado: {len(df)} registros mensuales por país")
-                                logger.info(f"📊 ETI {file_info['name']} - Total turistas por país (muestra):")
-                                
-                                # Mostrar resumen por país
-                                resumen_paises = df.groupby(pais_col)[turistas_col].sum().sort_values(ascending=False)
-                                for pais, total in resumen_paises.head(5).items():
-                                    logger.info(f"  🌍 {pais}: {total} turistas totales")
-                                
-                                logger.info(f"📅 ETI {file_info['name']} - Rango temporal: {df['indice_tiempo'].min()} - {df['indice_tiempo'].max()}")
-                                
-                            except Exception as e:
-                                logger.error(f"❌ ETI {file_info['name']} - Error procesando fechas: {e}")
-                                continue
-                        else:
-                            logger.error(f"❌ ETI {file_info['name']} - Columnas faltantes. Fecha: {fecha_col}, Turistas: {turistas_col}, País: {pais_col}")
-                            logger.error(f"📋 Columnas disponibles: {list(df.columns)}")
+                        if not all([fecha_col, turistas_col, pais_col]):
+                            logger.error(f"   ❌ COLUMNAS FALTANTES:")
+                            logger.error(f"      Fecha: {fecha_col}, Turistas: {turistas_col}, País: {pais_col}")
+                            archivos_turismo_saltados += 1
                             continue
+                        
+                        # MOSTRAR MUESTRA
+                        logger.info(f"   📊 MUESTRA ORIGINAL (primeras 3 filas):")
+                        for idx, row in df.head(3).iterrows():
+                            logger.info(f"      {pais_col}={row[pais_col]}, {turistas_col}={row[turistas_col]}, {fecha_col}={row[fecha_col]}")
+                        
+                        # 🔍 DEBUG EZEIZA: Estadísticas ANTES de limpiar
+                        if es_ezeiza:
+                            logger.info(f"   🚨 EZEIZA - ANTES de limpiar:")
+                            logger.info(f"      Total filas: {len(df)}")
+                            logger.info(f"      Total turistas: {df[turistas_col].sum():,}")
+                            logger.info(f"      Promedio: {df[turistas_col].mean():.0f}")
+                            logger.info(f"      Max: {df[turistas_col].max():,}")
+                            logger.info(f"      Min: {df[turistas_col].min():,}")
+                        
+                        # LIMPIAR
+                        df[pais_col] = df[pais_col].astype(str).str.strip().str.title()
+                        df[turistas_col] = pd.to_numeric(df[turistas_col], errors='coerce').fillna(0).astype(int)
+                        
+                        logger.info(f"   📊 TOTAL turistas ANTES: {df[turistas_col].sum():,}")
+                        
+                        # 🔍 DEBUG EZEIZA: Después de conversión numérica
+                        if es_ezeiza:
+                            logger.info(f"   🚨 EZEIZA - DESPUÉS de conversión numérica:")
+                            logger.info(f"      Total turistas: {df[turistas_col].sum():,}")
+                            logger.info(f"      Valores nulos: {df[turistas_col].isna().sum()}")
+                            logger.info(f"      Valores cero: {(df[turistas_col] == 0).sum()}")
+                        
+                        # PROCESAR FECHAS
+                        df[fecha_col] = pd.to_datetime(df[fecha_col], errors='coerce')
+                        df = df[df[fecha_col].notna()]
+                        
+                        # 🔍 DEBUG EZEIZA: Después de filtro de fechas nulas
+                        if es_ezeiza:
+                            logger.info(f"   🚨 EZEIZA - DESPUÉS de filtro fechas nulas:")
+                            logger.info(f"      Filas restantes: {len(df)}")
+                            logger.info(f"      Total turistas: {df[turistas_col].sum():,}")
+                        
+                        df = df[df[fecha_col] >= '2014-01-01']
+                        
+                        logger.info(f"   📅 Registros después filtro 2014: {len(df)}")
+                        
+                        # 🔍 DEBUG EZEIZA: Después de filtro 2014
+                        if es_ezeiza:
+                            logger.info(f"   🚨 EZEIZA - DESPUÉS de filtro 2014:")
+                            logger.info(f"      Filas restantes: {len(df)}")
+                            logger.info(f"      Total turistas: {df[turistas_col].sum():,}")
+                            logger.info(f"      Fechas min/max: {df[fecha_col].min()} / {df[fecha_col].max()}")
+                        
+                        # EXPANDIR O MANTENER
+                        if es_trimestral:
+                            logger.info(f"   🔄 EXPANDIENDO trimestral→mensual")
+                            df = expand_quarterly_to_monthly_by_country(
+                                df, fecha_col, turistas_col, pais_col, punto_entrada, file_info['name']
+                            )
+                        else:
+                            logger.info(f"   📊 MENSUAL - conservando valores")
+                            df['indice_tiempo'] = df[fecha_col].dt.strftime('%Y-%m')
+                            df['fecha_std'] = df[fecha_col]
+                            df['punto_entrada'] = punto_entrada
+                            df = df.rename(columns={turistas_col: 'turistas', pais_col: 'pais_origen'})
+                        
+                        # 🔍 DEBUG EZEIZA: Después de expansión/renombrar
+                        if es_ezeiza:
+                            logger.info(f"   🚨 EZEIZA - DESPUÉS de procesamiento temporal:")
+                            logger.info(f"      Filas finales: {len(df)}")
+                            if 'turistas' in df.columns:
+                                logger.info(f"      Total turistas: {df['turistas'].sum():,}")
+                            else:
+                                logger.info(f"      Total turistas (col original): {df[turistas_col].sum():,}")
+                            logger.info(f"      Columnas finales: {list(df.columns)}")
+                            
+                            # MUESTRA DETALLADA 2014-02
+                            sample_2014_02 = df[df['indice_tiempo'] == '2014-02']
+                            if len(sample_2014_02) > 0:
+                                logger.info(f"   🚨 EZEIZA - MUESTRA 2014-02 (5 filas):")
+                                for idx, row in sample_2014_02.head(5).iterrows():
+                                    pais = row.get('pais_origen', 'N/A')
+                                    turistas_val = row.get('turistas', 0)
+                                    logger.info(f"      {pais}: {turistas_val:,} turistas")
+                                logger.info(f"   🚨 EZEIZA - Total 2014-02: {sample_2014_02['turistas'].sum():,} turistas")
+                        
+                        # ASEGURAR INT
+                        if 'turistas' not in df.columns:
+                            df['turistas'] = df[turistas_col].astype(int)
+                        else:
+                            df['turistas'] = df['turistas'].astype(int)
+                        
+                        logger.info(f"   ✅ PROCESADO EXITOSO para {punto_entrada}")
+                        logger.info(f"   📊 TOTAL turistas DESPUÉS: {df['turistas'].sum():,}")
+                        logger.info(f"   📊 Registros finales: {len(df)}")
+                        
+                        archivos_turismo_procesados += 1
                 
                 elif path.endswith(".json"):
+                    # Procesar JSON (USD, etc)
                     with open(path, 'r', encoding='utf-8') as f:
                         json_data = json.load(f)
                     
-                    # Procesar datos de argentinadatos.com (USD)
-                    if file_info.get("src") == "dolarapi" or "argentinadatos" in file_info.get("name", ""):
-                        logger.info(f"💰 Procesando datos USD desde argentinadatos.com: {file_info['name']}")
+                    if file_info.get("src") == "dolarapi":
+                        logger.info(f"💰 Procesando USD")
+                        df = pd.DataFrame(json_data)
                         
-                        if isinstance(json_data, list) and len(json_data) > 0:
-                            df = pd.DataFrame(json_data)
-                            
-                            # Identificar columna de fecha de manera flexible
-                            fecha_col = None
-                            for col in df.columns:
-                                if col.lower() in ['fecha', 'date', 'time', 'timestamp']:
-                                    fecha_col = col
-                                    break
-                            
-                            if fecha_col:
-                                df['fecha_std'] = pd.to_datetime(df[fecha_col], errors='coerce')
-                                logger.info(f"✅ USD DataFrame creado: {len(df)} registros válidos con fecha_std desde '{fecha_col}'")
-                            else:
-                                logger.error(f"❌ No se encontró columna de fecha. Columnas: {list(df.columns)}")
-                                continue
-                        else:
-                            logger.error("❌ Formato JSON USD no válido")
-                            continue
-
-                # Verificar que el DataFrame no esté vacío
+                        fecha_col = next((col for col in df.columns if col.lower() in ['fecha', 'date']), None)
+                        if fecha_col:
+                            df['fecha_std'] = pd.to_datetime(df[fecha_col], errors='coerce')
+                            logger.info(f"✅ USD: {len(df)} registros")
+                
+                # VERIFICAR NO VACÍO
                 if df.empty:
-                    logger.warning(f"DataFrame vacío generado para {file_info['name']}")
+                    logger.warning(f"   ⚠️ DataFrame vacío")
                     continue
                 
-                # Filtrar datos desde 2014 en adelante
+                # FILTRAR 2014+
                 if 'fecha_std' in df.columns:
-                    original_rows = len(df)
-                    valid_dates = df['fecha_std'].notna().sum()
-                    logger.info(f"📅 {file_info['name']} - Fechas válidas: {valid_dates}/{original_rows}")
-                    
-                    if valid_dates > 0:
-                        df = df[df['fecha_std'] >= '2014-01-01']
-                        filtered_rows = len(df)
-                        if original_rows != filtered_rows:
-                            logger.info(f"📅 Filtro 2014+: {original_rows} -> {filtered_rows} registros en {file_info['name']}")
+                    df = df[df['fecha_std'] >= '2014-01-01']
                 
-                # Verificar que aún tengamos datos después de filtros
                 if df.empty:
-                    logger.warning(f"DataFrame vacío después de filtros para {file_info['name']}")
+                    logger.warning(f"   ⚠️ Vacío después de filtros")
                     continue
                 
-                # Guardar archivo procesado
+                # GUARDAR
                 output_path = processed_dir / category / f"processed_{file_info['name'].replace('.json', '.csv')}"
                 df.to_csv(output_path, index=False, encoding='utf-8')
+                
+                logger.info(f"   💾 Guardado: {output_path.name}")
+                
+                # 🔍 DEBUG EZEIZA: Verificar archivo guardado
+                if es_ezeiza:
+                    logger.info(f"   🚨 EZEIZA - Archivo guardado: {output_path}")
+                    logger.info(f"   🚨 EZEIZA - Tamaño archivo: {output_path.stat().st_size:,} bytes")
+                    # Re-leer para verificar
+                    df_verificacion = pd.read_csv(output_path)
+                    logger.info(f"   🚨 EZEIZA - Verificación post-guardado:")
+                    logger.info(f"      Filas guardadas: {len(df_verificacion)}")
+                    if 'turistas' in df_verificacion.columns:
+                        logger.info(f"      Total turistas guardados: {df_verificacion['turistas'].sum():,}")
                 
                 processed_files[category].append({
                     "original_file": file_info["name"],
                     "processed_path": str(output_path),
                     "rows": len(df),
                     "columns": len(df.columns),
-                    "has_date_column": 'fecha_std' in df.columns,
-                    "has_country_column": 'residencia' in df.columns or any('pais' in col.lower() for col in df.columns),  # NUEVA
-                    "date_range": f"{df['fecha_std'].min()} - {df['fecha_std'].max()}" if 'fecha_std' in df.columns else "N/A",
-                    "original_status": file_info.get("status", "unknown"),
+                    "has_punto_entrada": 'punto_entrada' in df.columns,
+                    "punto_entrada_value": df['punto_entrada'].iloc[0] if 'punto_entrada' in df.columns and len(df) > 0 else None,
+                    "total_turistas": int(df['turistas'].sum()) if 'turistas' in df.columns else 0,
                     "data_source": file_info.get("src", "unknown"),
-                    "frequency": file_info.get("frequency", "unknown"),
-                    "was_quarterly_expanded": file_info.get("frequency") == "trimestral" and category == "turismo",
-                    "integers_enforced": category == "turismo",
-                    "country_processed": category == "turismo"  # NUEVA: indicar procesamiento por país
+                    "frequency": file_info.get("frequency", "unknown")
                 })
                 
-                logger.info(f"✅ Procesado {category}/{file_info['name']}: {len(df)} filas, {len(df.columns)} columnas - Por país: {category == 'turismo'}")
-                
             except Exception as e:
-                logger.error(f"❌ Error procesando {file_info['name']}: {e}")
+                logger.error(f"   ❌ Error: {e}")
                 import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
+                logger.error(traceback.format_exc())
                 continue
         
-        # Resumen mejorado con información de países
+        # RESUMEN
+        logger.info(f"{'='*70}")
+        logger.info(f"📊 RESUMEN DE PROCESAMIENTO")
+        logger.info(f"{'='*70}")
+        logger.info(f"✅ Archivos ETI procesados: {archivos_turismo_procesados}")
+        logger.info(f"⚠️ Archivos ETI saltados: {archivos_turismo_saltados}")
+        
+        for cat, files_list in processed_files.items():
+            if cat == "turismo" and files_list:
+                logger.info(f"\n🎯 TURISMO ({len(files_list)} archivos):")
+                total_turistas = 0
+                for f in files_list:
+                    turistas = f.get('total_turistas', 0)
+                    total_turistas += turistas
+                    logger.info(f"  • {f['punto_entrada_value']}: {turistas:,} turistas")
+                logger.info(f"  📊 TOTAL TURISTAS: {total_turistas:,}")
+        
         summary = {
             "timestamp": datetime.now().isoformat(),
             "files_by_category": {cat: len(files) for cat, files in processed_files.items()},
             "total_processed": sum(len(files) for files in processed_files.values()),
             "processed_files": processed_files,
             "success": True,
-            "quarterly_files_expanded": sum(1 for cat_files in processed_files.values() 
-                                          for file_info in cat_files 
-                                          if file_info.get("was_quarterly_expanded", False)),
-            "integer_enforcement_applied": sum(1 for cat_files in processed_files.values()
-                                             for file_info in cat_files
-                                             if file_info.get("integers_enforced", False)),
-            "country_processing_applied": sum(1 for cat_files in processed_files.values()  # NUEVA
-                                            for file_info in cat_files
-                                            if file_info.get("country_processed", False))
+            "archivos_turismo_procesados": archivos_turismo_procesados,
+            "archivos_turismo_saltados": archivos_turismo_saltados
         }
         
-        # Guardar resumen
         summary_path = processed_dir / "processing_summary.json"
         with open(summary_path, 'w', encoding='utf-8') as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
         
-        logger.info(f"📊 Procesamiento completado: {summary['total_processed']} archivos")
-        logger.info(f"📊 Archivos trimestrales expandidos a mensuales: {summary['quarterly_files_expanded']}")
-        logger.info(f"📊 Archivos procesados por país: {summary['country_processing_applied']}")  # NUEVA
-        
         return summary
         
     except Exception as e:
-        logger.error(f"❌ Error en procesamiento de datos: {e}")
+        logger.error(f"❌ Error en procesamiento: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return {"error": str(e), "success": False}
 
 @task
@@ -1583,17 +1667,16 @@ def create_final_monthly_dataset(
     trends_monthly: Dict[str, Any],
     directories: Dict[str, str]
 ) -> str:
-    """Crea dataset final MENSUAL agrupado POR PAÍS DE ORIGEN."""
+    """Crea dataset final MENSUAL con PUNTO DE ENTRADA - DEBUGGING MEJORADO."""
     try:
-        logger.info("🎯 Creando dataset final MENSUAL AGRUPADO POR PAÍS DE ORIGEN...")
+        logger.info("🎯 Creando dataset final MENSUAL con TIEMPO × PAÍS × PUNTO_ENTRADA...")
 
-        # Función auxiliar para convertir fecha - MOVER AL PRINCIPIO
         def convertir_fecha_a_mes(fecha_str):
             try:
                 if pd.isna(fecha_str):
                     return None
                 if isinstance(fecha_str, str) and len(fecha_str) == 7 and '-' in fecha_str:
-                    return fecha_str  # Ya está en formato YYYY-MM
+                    return fecha_str
                 fecha = pd.to_datetime(fecha_str)
                 return fecha.strftime('%Y-%m')
             except:
@@ -1604,123 +1687,183 @@ def create_final_monthly_dataset(
         
         logger.info(f"📊 Total archivos de turismo procesados: {len(turismo_files)}")
 
-        # Combinar todos los archivos ETI en un solo DataFrame por país
         all_tourism_data = []
         
         for file_info in turismo_files:
             try:
-                logger.info(f"🔄 Cargando archivo de turismo: {file_info.get('original_file', 'unknown')}")
-                df = pd.read_csv(file_info["processed_path"])
+                file_name = file_info.get('original_file', 'unknown')
+                file_path = file_info["processed_path"]
                 
-                logger.info(f"📊 Archivo cargado: {len(df)} filas, columnas: {list(df.columns)}")
+                logger.info(f"🔄 Cargando: {file_name}")
+                logger.info(f"   📁 Ruta: {file_path}")
+                
+                df = pd.read_csv(file_path)
+                
+                logger.info(f"   📊 Archivo cargado: {len(df)} filas × {len(df.columns)} columnas")
+                logger.info(f"   📋 Columnas: {list(df.columns)}")
+                
+                # 🔍 DEBUG: Mostrar estadísticas ANTES de filtrar columnas
+                if 'turistas' in df.columns:
+                    total_turistas_antes = df['turistas'].sum()
+                    logger.info(f"   💰 Total turistas ANTES de filtrar columnas: {total_turistas_antes:,}")
                 
                 # Buscar columnas necesarias
                 indice_col = None
                 turistas_col = None
                 pais_col = None
+                punto_col = None
                 
                 for col in df.columns:
                     col_lower = col.lower()
                     if col_lower in ['indice_tiempo', 'fecha_std', 'periodo', 'año_mes']:
                         indice_col = col
-                        break
-                
-                for col in df.columns:
-                    col_lower = col.lower()
-                    if any(keyword in col_lower for keyword in ['turistas', 'visitantes', 'no_residentes']):
+                    elif col_lower in ['turistas', 'visitantes', 'no_residentes', 'turistas_no_residentes']:
                         turistas_col = col
-                        break
-                
-                for col in df.columns:
-                    col_lower = col.lower()
-                    if any(keyword in col_lower for keyword in ['residencia', 'pais', 'country']):
+                    elif col_lower in ['pais_origen', 'residencia', 'pais', 'country', 'pais_de_residencia']:
                         pais_col = col
-                        break
+                    elif col_lower == 'punto_entrada':
+                        punto_col = col
                 
-                if indice_col and turistas_col and pais_col:
-                    logger.info(f"✅ Columnas encontradas: tiempo='{indice_col}', turistas='{turistas_col}', país='{pais_col}'")
+                logger.info(f"   🔍 Columnas identificadas:")
+                logger.info(f"      - Tiempo: {indice_col}")
+                logger.info(f"      - Turistas: {turistas_col}")
+                logger.info(f"      - País: {pais_col}")
+                logger.info(f"      - Punto entrada: {punto_col}")
+                
+                if indice_col and turistas_col and pais_col and punto_col:
+                    logger.info(f"   ✅ Columnas completas encontradas")
                     
-                    # Extraer datos necesarios
-                    df_subset = df[[indice_col, turistas_col, pais_col]].copy()
-                    df_subset.columns = ['indice_tiempo', 'turistas', 'pais_origen']
+                    # MANTENER LAS 4 COLUMNAS CLAVE
+                    df_subset = df[[indice_col, turistas_col, pais_col, punto_col]].copy()
+                    df_subset.columns = ['indice_tiempo', 'turistas', 'pais_origen', 'punto_entrada']
                     
-                    # Limpiar y normalizar países
+                    # 🔍 DEBUG: Verificar ANTES de limpiar
+                    logger.info(f"   📊 ANTES de limpiar:")
+                    logger.info(f"      Total turistas: {df_subset['turistas'].sum():,}")
+                    logger.info(f"      Países únicos: {df_subset['pais_origen'].nunique()}")
+                    logger.info(f"      Puntos únicos: {df_subset['punto_entrada'].nunique()}")
+                    
+                    # Limpiar datos
                     df_subset['pais_origen'] = df_subset['pais_origen'].astype(str).str.strip().str.title()
+                    df_subset['punto_entrada'] = df_subset['punto_entrada'].astype(str).str.strip()
                     df_subset['turistas'] = pd.to_numeric(df_subset['turistas'], errors='coerce').fillna(0).astype(int)
                     
-                    # Agregar fuente para tracking
-                    df_subset['fuente'] = file_info.get('data_source', 'unknown')
+                    # 🔍 DEBUG: Verificar DESPUÉS de limpiar
+                    logger.info(f"   📊 DESPUÉS de limpiar:")
+                    logger.info(f"      Total turistas: {df_subset['turistas'].sum():,}")
+                    logger.info(f"      Valores nulos en turistas: {df_subset['turistas'].isna().sum()}")
+                    logger.info(f"      Valores cero: {(df_subset['turistas'] == 0).sum()}")
+                    
+                    # 🔍 MOSTRAR MUESTRA POR PUNTO DE ENTRADA
+                    punto_entrada_value = df_subset['punto_entrada'].iloc[0]
+                    logger.info(f"   🚪 Punto entrada: {punto_entrada_value}")
+                    logger.info(f"   📊 Total turistas para este punto: {df_subset['turistas'].sum():,}")
                     
                     all_tourism_data.append(df_subset)
                     
-                    logger.info(f"✅ Datos agregados: {len(df_subset)} registros de {file_info.get('original_file', 'unknown')}")
+                    logger.info(f"   ✅ Agregados {len(df_subset)} registros con {df_subset['turistas'].sum():,} turistas")
                     
                 else:
-                    logger.error(f"❌ Columnas faltantes en {file_info.get('original_file', 'unknown')}")
-                    logger.error(f"  Tiempo: {indice_col}, Turistas: {turistas_col}, País: {pais_col}")
+                    logger.error(f"   ❌ Columnas faltantes en {file_name}")
+                    logger.error(f"      Disponibles: {list(df.columns)}")
+                    logger.error(f"      Buscadas: tiempo={indice_col}, turistas={turistas_col}, país={pais_col}, punto={punto_col}")
                     continue
                     
             except Exception as e:
-                logger.error(f"❌ Error procesando archivo {file_info.get('original_file', 'unknown')}: {e}")
+                logger.error(f"❌ Error procesando {file_name}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 continue
 
         if not all_tourism_data:
             logger.error("❌ No se pudieron procesar datos de turismo")
             return ""
 
-        # Combinar todos los datos
+        logger.info(f"📊 Total DataFrames a combinar: {len(all_tourism_data)}")
+        
+        # 🔍 DEBUG: Mostrar totales ANTES de combinar
+        for idx, df_temp in enumerate(all_tourism_data):
+            punto = df_temp['punto_entrada'].iloc[0] if len(df_temp) > 0 else 'N/A'
+            total = df_temp['turistas'].sum()
+            logger.info(f"   {idx+1}. {punto}: {total:,} turistas en {len(df_temp)} registros")
+
         df_combined = pd.concat(all_tourism_data, ignore_index=True)
         logger.info(f"📊 Datos combinados: {len(df_combined)} registros totales")
+        logger.info(f"💰 Total turistas COMBINADOS: {df_combined['turistas'].sum():,}")
 
-        # AGREGACIÓN POR PAÍS Y TIEMPO - SUMAR TURISTAS DEL MISMO PAÍS
-        logger.info("🔄 Agregando turistas por país de origen y mes...")
+        # VERIFICAR ESTRUCTURA ANTES DE AGREGAR
+        logger.info(f"📋 Columnas del DataFrame combinado: {list(df_combined.columns)}")
+        logger.info(f"📊 Tipos de datos:")
+        for col in df_combined.columns:
+            logger.info(f"   - {col}: {df_combined[col].dtype}")
         
-        df_aggregated = df_combined.groupby(['indice_tiempo', 'pais_origen'], as_index=False).agg({
+        # MUESTRA DE DATOS ANTES DE AGREGAR
+        logger.info(f"📋 Muestra de datos ANTES de agregar (primeras 5 filas):")
+        for idx, row in df_combined.head(5).iterrows():
+            logger.info(f"   {row['indice_tiempo']} | {row['pais_origen']} | {row['punto_entrada']} | {row['turistas']:,} turistas")
+
+        # AGREGACIÓN POR TIEMPO + PAÍS + PUNTO_ENTRADA
+        logger.info("🔄 Agregando por tiempo × país × punto_entrada...")
+        
+        # 🔍 DEBUG: Verificar valores únicos antes de agrupar
+        logger.info(f"📊 Valores únicos ANTES de agrupar:")
+        logger.info(f"   - Índices tiempo: {df_combined['indice_tiempo'].nunique()}")
+        logger.info(f"   - Países: {df_combined['pais_origen'].nunique()}")
+        logger.info(f"   - Puntos entrada: {df_combined['punto_entrada'].nunique()}")
+        
+        df_aggregated = df_combined.groupby(
+            ['indice_tiempo', 'pais_origen', 'punto_entrada'], 
+            as_index=False
+        ).agg({
             'turistas': 'sum'
         })
         
-        logger.info(f"📊 Datos agregados por país: {len(df_aggregated)} registros únicos (tiempo x país)")
+        logger.info(f"📊 Registros únicos (tiempo × país × punto): {len(df_aggregated)}")
+        logger.info(f"💰 Total turistas DESPUÉS de agregar: {df_aggregated['turistas'].sum():,}")
         
-        # Mostrar estadísticas por país
-        paises_stats = df_aggregated.groupby('pais_origen')['turistas'].agg(['sum', 'count']).sort_values('sum', ascending=False)
-        logger.info(f"🌍 Top 10 países por total de turistas:")
-        for pais, stats in paises_stats.head(10).iterrows():
-            logger.info(f"  🌍 {pais}: {stats['sum']:,} turistas totales en {stats['count']} meses")
+        # 🔍 DEBUG: Verificar si se perdieron datos en la agregación
+        diferencia = df_combined['turistas'].sum() - df_aggregated['turistas'].sum()
+        if abs(diferencia) > 1:
+            logger.error(f"❌ PÉRDIDA DE DATOS EN AGREGACIÓN: {diferencia:,} turistas")
+        else:
+            logger.info(f"✅ No se perdieron datos en la agregación")
+        
+        # Estadísticas por punto de entrada
+        puntos_stats = df_aggregated.groupby('punto_entrada')['turistas'].agg(['sum', 'count']).sort_values('sum', ascending=False)
+        logger.info(f"🚪 Estadísticas por punto de entrada DESPUÉS de agregar:")
+        for punto, stats in puntos_stats.iterrows():
+            logger.info(f"  🚪 {punto}: {stats['sum']:,} turistas en {stats['count']} registros")
 
-        # Convertir índice_tiempo a formato string consistente
+        # Convertir índice_tiempo
         df_aggregated['indice_tiempo'] = df_aggregated['indice_tiempo'].apply(
             lambda x: convertir_fecha_a_mes(x) if pd.notna(x) else None
         )
         df_aggregated = df_aggregated[df_aggregated['indice_tiempo'].notna()]
 
-        # Crear dataset con estructura país-mes
         logger.info(f"📊 Rango temporal: {df_aggregated['indice_tiempo'].min()} - {df_aggregated['indice_tiempo'].max()}")
-        logger.info(f"🌍 Total países únicos: {df_aggregated['pais_origen'].nunique()}")
+        logger.info(f"🌍 Países únicos: {df_aggregated['pais_origen'].nunique()}")
+        logger.info(f"🚪 Puntos de entrada únicos: {df_aggregated['punto_entrada'].nunique()}")
         
-        # Ordenar por tiempo y país
+        # Ordenar por TIEMPO, PAÍS Y PUNTO DE ENTRADA
         df_final = df_aggregated.copy()
-        df_final = df_final.sort_values(['indice_tiempo', 'pais_origen'])
+        df_final = df_final.sort_values(['indice_tiempo', 'pais_origen', 'punto_entrada'])
 
-        # Merge con datos USD mensuales
+        # Merge con USD (se repite para cada combinación)
         if usd_monthly.get("status") == "processed":
-            logger.info("💰 Mergeando con datos USD mensuales...")
+            logger.info("💰 Mergeando con datos USD...")
             
             usd_path = usd_monthly["monthly_path"]
             
             if Path(usd_path).exists():
                 df_usd = pd.read_csv(usd_path)
-                logger.info(f"📊 Datos USD: {len(df_usd)} meses")
-                
-                # Merge USD (se repite para cada país en el mismo mes)
                 df_usd['indice_tiempo'] = df_usd['indice_tiempo'].astype(str)
                 df_final['indice_tiempo'] = df_final['indice_tiempo'].astype(str)
                 
                 df_final = df_final.merge(df_usd, on="indice_tiempo", how="left")
                 
                 usd_matches = df_final['precio_promedio_usd'].notna().sum()
-                logger.info(f"✅ Merge USD completado: {usd_matches}/{len(df_final)} registros con datos USD")
+                logger.info(f"✅ Merge USD: {usd_matches}/{len(df_final)} registros")
                 
-                # Variables USD
                 if usd_matches > 0:
                     median_usd = df_final['precio_promedio_usd'].median()
                     df_final['usd_alto'] = (df_final['precio_promedio_usd'] > median_usd).astype(int)
@@ -1730,23 +1873,19 @@ def create_final_monthly_dataset(
                         df_final['usd_alta_variabilidad'] = (df_final['variacion_usd_mensual'] > median_variation).astype(int)
             else:
                 logger.error("❌ Archivo USD no encontrado")
-                # Agregar columnas vacías
                 usd_columns = ['precio_promedio_usd', 'precio_minimo_usd', 'precio_maximo_usd', 
                               'variacion_usd_mensual', 'variacion_porcentual_usd', 'usd_alto', 'usd_alta_variabilidad']
                 for col in usd_columns:
                     df_final[col] = None
 
-        # Merge con datos de Google Trends mensuales  
+        # Merge con Google Trends
         if trends_monthly.get("status") == "processed":
-            logger.info("📈 Mergeando con datos de Google Trends mensuales...")
+            logger.info("📈 Mergeando con Google Trends...")
             
             trends_path = trends_monthly["monthly_path"]
             
             if Path(trends_path).exists():
                 df_trends = pd.read_csv(trends_path)
-                logger.info(f"📊 Datos Google Trends: {len(df_trends)} meses")
-                
-                # Merge Trends (se repite para cada país en el mismo mes)
                 df_trends['indice_tiempo'] = df_trends['indice_tiempo'].astype(str)
                 
                 trends_cols = ['indice_tiempo', 'interes_google_promedio']
@@ -1756,74 +1895,68 @@ def create_final_monthly_dataset(
                 df_final = df_final.merge(df_trends[trends_cols], on="indice_tiempo", how="left")
                 
                 trends_matches = df_final['interes_google_promedio'].notna().sum()
-                logger.info(f"✅ Merge Google Trends completado: {trends_matches}/{len(df_final)} registros con datos de interés")
+                logger.info(f"✅ Merge Trends: {trends_matches}/{len(df_final)} registros")
                 
-                # Crear variable interes_alto si no existe
                 if 'interes_alto' not in df_final.columns and 'interes_google_promedio' in df_final.columns:
                     median_interest = df_final['interes_google_promedio'].median()
                     df_final['interes_alto'] = (df_final['interes_google_promedio'] > median_interest).astype(int)
         else:
-            logger.warning("⚠️ No hay datos de Google Trends procesados disponibles")
+            logger.warning("⚠️ No hay datos de Google Trends")
             df_final["interes_google_promedio"] = None
             df_final["interes_alto"] = None
 
-        # Agregar variables temporales
+        # Variables temporales
         df_final[['año', 'mes']] = df_final['indice_tiempo'].apply(
             lambda x: pd.Series([int(x.split('-')[0]), int(x.split('-')[1])] if isinstance(x, str) and '-' in x else [None, None])
         )
 
-        # Variables estacionales mensuales
+        # Variables estacionales
         meses_nombres = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"]
         for i in range(1, 13):
             df_final[f'es_{meses_nombres[i-1]}'] = (df_final['mes'] == i).astype(int)
 
-        # Variables de eventos Mendoza
+        # Eventos Mendoza
         df_final['mes_vendimia'] = df_final['mes'].isin([2, 3]).astype(int)
         df_final['vacaciones_invierno'] = df_final['mes'].isin([7, 8]).astype(int)
         df_final['temporada_alta'] = df_final['mes'].isin([1, 2, 3, 7, 8, 12]).astype(int)
 
-        # Ordenar por tiempo y país (REQUISITO CUMPLIDO)
-        df_final = df_final.sort_values(['indice_tiempo', 'pais_origen'])
-
-        # Verificar estructura final
-        logger.info(f"📊 Dataset final por país: {len(df_final)} registros")
-        logger.info(f"📊 Estructura: {df_final['indice_tiempo'].nunique()} meses × {df_final['pais_origen'].nunique()} países")
-        logger.info(f"📋 Columnas finales: {len(df_final.columns)}")
+        # ORDENAMIENTO FINAL
+        df_final = df_final.sort_values(['indice_tiempo', 'pais_origen', 'punto_entrada'])
 
         # Guardar archivo final
         local_data_dir = Path("/usr/local/airflow/data/raw")
         local_data_dir.mkdir(parents=True, exist_ok=True)
-        output_path = local_data_dir / "mendoza_turismo_por_pais_mensual.csv"
+        output_path = local_data_dir / "mendoza_turismo_detallado_mensual.csv"
         
         df_final.to_csv(output_path, index=False, encoding="utf-8")
         
         logger.info("=" * 70)
-        logger.info("📊 DATASET FINAL MENSUAL POR PAÍS CREADO CON ÉXITO")
+        logger.info("📊 DATASET FINAL DETALLADO CREADO CON ÉXITO")
         logger.info("=" * 70)
         logger.info(f"📁 Archivo: {output_path}")
         logger.info(f"📅 Meses únicos: {df_final['indice_tiempo'].nunique()}")
         logger.info(f"🌍 Países únicos: {df_final['pais_origen'].nunique()}")
-        logger.info(f"📊 Total registros: {len(df_final)}")
+        logger.info(f"🚪 Puntos de entrada únicos: {df_final['punto_entrada'].nunique()}")
+        logger.info(f"📊 Total registros: {len(df_final)} (tiempo × país × punto)")
         logger.info(f"🗓️ Rango: {df_final['indice_tiempo'].min()} - {df_final['indice_tiempo'].max()}")
         logger.info(f"📊 Total turistas: {df_final['turistas'].sum():,}")
         
-        # Top países por turistas
-        top_paises = df_final.groupby('pais_origen')['turistas'].sum().sort_values(ascending=False).head(5)
-        logger.info("🌍 Top 5 países por turistas:")
-        for pais, total in top_paises.items():
-            logger.info(f"  📊 {pais}: {total:,} turistas")
+        # Top combinaciones
+        top_combos = df_final.groupby(['pais_origen', 'punto_entrada'])['turistas'].sum().sort_values(ascending=False).head(5)
+        logger.info("🔝 Top 5 combinaciones (país × punto):")
+        for (pais, punto), total in top_combos.items():
+            logger.info(f"  📊 {pais} → {punto}: {total:,} turistas")
         
-        logger.info("✅ ORDENADO POR TIEMPO Y PAÍS - LISTO PARA ANÁLISIS")
+        logger.info("✅ ORDENADO: TIEMPO → PAÍS → PUNTO_ENTRADA")
         logger.info("=" * 70)
 
         return str(output_path)
 
     except Exception as e:
-        logger.error(f"❌ Error creando dataset final por país: {e}")
+        logger.error(f"❌ Error creando dataset detallado: {e}")
         import traceback
-        logger.error(f"Traceback completo: {traceback.format_exc()}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return ""
-        
 # ─── DAG Definition Mejorado ───────────────────────────────────────────────────
 
 with DAG(

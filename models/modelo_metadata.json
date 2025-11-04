@@ -1,0 +1,67 @@
+{
+  "model_info": {
+    "nombre": "Gradient Boosting",
+    "tipo": "regresion",
+    "framework": "scikit-learn",
+    "version_sklearn": "1.3.0"
+  },
+  "metricas": {
+    "test_rmse": 5157.861935605436,
+    "test_mae": 2914.2044851503597,
+    "test_r2": 0.8998404824445432,
+    "train_rmse": 912.435712688425,
+    "overfitting_ratio": 5.652849689988759
+  },
+  "dataset_info": {
+    "n_registros_train": 1990,
+    "n_registros_test": 498,
+    "n_features": 27,
+    "fecha_corte_train_test": "2023-06-01",
+    "registros_eliminados_ceros": 389
+  },
+  "features": {
+    "numericas": [
+      "precio_promedio_usd",
+      "precio_minimo_usd",
+      "precio_maximo_usd",
+      "dias",
+      "variacion_usd_mensual",
+      "variacion_porcentual_usd",
+      "usd_alto",
+      "usd_alta_variabilidad",
+      "año",
+      "mes",
+      "es_enero",
+      "es_febrero",
+      "es_marzo",
+      "es_abril",
+      "es_mayo",
+      "es_junio",
+      "es_julio",
+      "es_agosto",
+      "es_septiembre",
+      "es_octubre",
+      "es_noviembre",
+      "es_diciembre",
+      "mes_vendimia",
+      "vacaciones_invierno",
+      "temporada_alta"
+    ],
+    "categoricas": [
+      "pais_origen",
+      "punto_entrada"
+    ]
+  },
+  "preprocessing": {
+    "numeric_imputer": "median",
+    "numeric_scaler": "StandardScaler",
+    "categorical_imputer": "constant (missing)",
+    "categorical_encoder": "OneHotEncoder"
+  },
+  "training_info": {
+    "fecha_entrenamiento": "2025-11-04 15:48:27",
+    "autor": "Juliccc",
+    "entrega": "4 - Visualización e Integración",
+    "random_state": 42
+  }
+}

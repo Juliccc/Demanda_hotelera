@@ -1,5 +1,3 @@
-# requirements.txt - Actualizado para DAG mensual v3.0
-
 # Core data processing (mantener existente)
 pandas>=1.5.0
 pyyaml
@@ -11,14 +9,14 @@ urllib3
 jsonschema
 chardet
 
-# Fechas y utilidades (mantener)
+# Fechas y utilidades 
 python-dateutil
 
-# Análisis de datos básico (mantener)
+# Análisis de datos básico 
 numpy
 scipy
 
-# Machine Learning (mantener)
+# Machine Learning 
 scikit-learn
 statsmodels
 xgboost
@@ -35,24 +33,18 @@ cerberus>=1.3.4
 # Para logging estructurado
 structlog>=22.1.0
 
-# Para manejo de timezone (importante para datos temporales MENSUAL)
+# Para manejo de timezone 
 pytz>=2022.1
 
 # Para requests más robustos con datos ETI múltiples
 requests-cache>=0.9.0
 tenacity>=8.0.0
 
-# Para procesamiento de series temporales MENSUALES
-# prophet  # Mantener comentado por ahora
-
-# Utilidades adicionales (mantener)
+# Utilidades adicionales
 pathlib
 
-# OPCIONALES para análisis futuro
-# matplotlib>=3.5.0
-# seaborn>=0.11.0
-
-# Para streamlit (Cuarta Entrega) - compatible con datos mensuales
-# streamlit>=1.25.0
-# plotly>=5.15.0
-# altair>=5.0.0
+# Para streamlit 
+streamlit>=1.25.0
+plotly>=5.15.0
+altair>=5.0.0
+joblib==1.3.2

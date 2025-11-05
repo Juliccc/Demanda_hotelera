@@ -591,7 +591,7 @@ elif pagina == "🤖 Información del Modelo":
                 "Registros Test": metadata['dataset_info']['n_registros_test'],
                 "Features": metadata.get('dataset_info', {}).get('n_features', 'N/A'),
                 "Fecha Corte Train/Test": metadata['dataset_info']['fecha_corte_train_test'],
-                "Registros Eliminados (0 turistas)": metadata['dataset_info']['registros_eliminados_ceros']
+                
             })
         
         with col2:

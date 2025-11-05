@@ -700,264 +700,528 @@ elif pagina == "🔮 Hacer Predicciones":
     
     st.markdown("""
     <div class="info-box">
-        📝 Ingresa los valores de las variables para predecir el número de turistas.
-        El modelo procesará automáticamente los datos y generará una predicción.
+        📝 Ingresa solo las variables principales. Las variables derivadas se calcularán automáticamente.
+        💡 <strong>Nuevo:</strong> Puedes predecir para un país específico o para todos los países en conjunto.
     </div>
     """, unsafe_allow_html=True)
     
     if modelo and metadata:
-        # Formulario de entrada
-        st.subheader("📝 Ingresa los Datos")
+        # Obtener features del metadata
+        numeric_features = metadata['features']['numericas']
+        categorical_features = metadata['features']['categoricas']
+        
+        # ═══════════════════════════════════════════════════════════════════
+        # FORMULARIO SIMPLIFICADO
+        # ═══════════════════════════════════════════════════════════════════
         
         with st.form("form_prediccion"):
-            # Dividir en columnas
             col1, col2, col3 = st.columns(3)
             
-            # Obtener features del metadata
-            numeric_features = metadata['features']['numericas']
-            categorical_features = metadata['features']['categoricas']
-            
-            # Diccionario para almacenar inputs
-            input_data = {}
-            
-            # INPUTS NUMÉRICOS
+            # ══════════════════════════════════════════════════════════════
+            # COLUMNA 1: VARIABLES TEMPORALES
+            # ══════════════════════════════════════════════════════════════
             with col1:
-                st.markdown("### 🔢 Variables Numéricas")
+                st.markdown("### 📅 Fecha")
                 
-                # Año
-                if 'año' in numeric_features:
-                    input_data['año'] = st.number_input(
-                        "Año",
-                        min_value=2024,
-                        max_value=2030,
-                        value=2025,
-                        step=1
-                    )
+                año_input = st.number_input(
+                    "Año",
+                    min_value=2024,
+                    max_value=2030,
+                    value=2025,
+                    step=1,
+                    help="Año para el cual deseas predecir"
+                )
                 
-                # Mes
-                if 'mes' in numeric_features:
-                    input_data['mes'] = st.selectbox(
-                        "Mes",
-                        options=list(range(1, 13)),
-                        format_func=lambda x: [
-                            'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-                            'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-                        ][x-1]
-                    )
+                mes_input = st.selectbox(
+                    "Mes",
+                    options=list(range(1, 13)),
+                    index=datetime.now().month - 1,
+                    format_func=lambda x: [
+                        'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+                    ][x-1],
+                    help="Mes para el cual deseas predecir"
+                )
                 
-                # Precio USD
-                if 'precio_promedio_usd' in numeric_features:
-                    input_data['precio_promedio_usd'] = st.number_input(
-                        "Precio Promedio (USD)",
-                        min_value=0.0,
-                        max_value=5000.0,
-                        value=850.0,
-                        step=50.0
-                    )
-                
-                # Otras variables numéricas (valores por defecto)
-                for feat in numeric_features:
-                    if feat not in ['año', 'mes', 'precio_promedio_usd', 'turistas']:
-                        if 'usd' in feat.lower() or 'precio' in feat.lower():
-                            input_data[feat] = st.number_input(
-                                feat.replace('_', ' ').title(),
-                                value=850.0,
-                                step=10.0,
-                                key=feat
-                            )
-                        elif 'tasa' in feat.lower() or 'variacion' in feat.lower():
-                            input_data[feat] = st.number_input(
-                                feat.replace('_', ' ').title(),
-                                value=0.0,
-                                step=0.1,
-                                key=feat
-                            )
-                        else:
-                            input_data[feat] = st.number_input(
-                                feat.replace('_', ' ').title(),
-                                value=0.0,
-                                step=1.0,
-                                key=feat
-                            )
-            
-            # INPUTS CATEGÓRICOS
-            with col2:
-                st.markdown("### 📋 Variables Categóricas")
-                
-                # País de origen
-                if 'pais_origen' in categorical_features:
-                    paises_disponibles = []
-                    if df_full is not None and 'pais_origen' in df_full.columns:
-                        paises_disponibles = sorted(df_full['pais_origen'].unique().tolist())
-                    else:
-                        paises_disponibles = ['Chile', 'Brasil', 'Estados Unidos', 'Uruguay', 'Paraguay']
-                    
-                    input_data['pais_origen'] = st.selectbox(
-                        "País de Origen",
-                        options=paises_disponibles
-                    )
-                
-                # Punto de entrada
-                if 'punto_entrada' in categorical_features:
-                    puntos_disponibles = []
-                    if df_full is not None and 'punto_entrada' in df_full.columns:
-                        puntos_disponibles = sorted(df_full['punto_entrada'].unique().tolist())
-                    else:
-                        puntos_disponibles = ['Aeropuerto Buenos Aires', 'Paso Cristo Redentor', 'Aeropuerto Mendoza']
-                    
-                    input_data['punto_entrada'] = st.selectbox(
-                        "Punto de Entrada",
-                        options=puntos_disponibles
-                    )
-                
-                # Otras variables categóricas
-                for feat in categorical_features:
-                    if feat not in ['pais_origen', 'punto_entrada']:
-                        if df_full is not None and feat in df_full.columns:
-                            opciones = sorted(df_full[feat].unique().tolist())
-                        else:
-                            opciones = ['Opción 1', 'Opción 2', 'Opción 3']
-                        
-                        input_data[feat] = st.selectbox(
-                            feat.replace('_', ' ').title(),
-                            options=opciones,
-                            key=feat
-                        )
-            
-            # INFORMACIÓN ADICIONAL
-            with col3:
-                st.markdown("### ℹ️ Información")
-                st.markdown("""
-                **💡 Tips para predicciones:**
-                
-                - Selecciona el mes y año deseado
-                - Ajusta el precio según mercado
-                - Elige el país de origen principal
-                - Selecciona el punto de entrada
-                
-                **📊 El modelo considera:**
-                - Estacionalidad mensual
-                - Tendencias históricas
-                - Variables económicas
-                - Origen de turistas
-                """)
+                # Información del mes
+                mes_nombre = [
+                    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+                ][mes_input - 1]
                 
                 st.markdown("---")
+                st.markdown("#### 📊 Características:")
+                
+                # Características del mes
+                es_temporada_alta = mes_input in [12, 1, 2]
+                es_vendimia = mes_input == 3
+                es_vacaciones_invierno = mes_input == 7
+                
+                if es_temporada_alta:
+                    st.success("🔥 Temporada Alta")
+                elif es_vendimia:
+                    st.info("🍇 Vendimia")
+                elif es_vacaciones_invierno:
+                    st.info("❄️ Vacaciones Invierno")
+                else:
+                    st.warning("📉 Temporada Baja")
+            
+            # ══════════════════════════════════════════════════════════════
+            # COLUMNA 2: ORIGEN Y ENTRADA
+            # ══════════════════════════════════════════════════════════════
+            with col2:
+                st.markdown("### 🌍 Origen")
+                
+                # País de origen CON OPCIÓN "TODOS"
+                paises_disponibles = []
+                if df_full is not None and 'pais_origen' in df_full.columns:
+                    paises_disponibles = sorted(df_full['pais_origen'].unique().tolist())
+                else:
+                    paises_disponibles = ['Chile', 'Brasil', 'Estados Unidos', 'Uruguay', 'Paraguay']
+                
+                # AGREGAR OPCIÓN "TODOS"
+                opciones_pais = ['🌎 Todos los países (Total)'] + paises_disponibles
+                
+                pais_seleccion = st.selectbox(
+                    "País de Origen",
+                    options=opciones_pais,
+                    help="Selecciona un país específico o 'Todos' para predecir el total"
+                )
+                
+                # Detectar si seleccionó "Todos"
+                predecir_todos_paises = pais_seleccion.startswith('🌎')
+                
+                if predecir_todos_paises:
+                    st.info(f"📊 Se predecirá para {len(paises_disponibles)} países")
+                
+                st.markdown("### 🚪 Entrada")
+                
+                # Punto de entrada
+                puntos_disponibles = []
+                if df_full is not None and 'punto_entrada' in df_full.columns:
+                    puntos_disponibles = sorted(df_full['punto_entrada'].unique().tolist())
+                else:
+                    puntos_disponibles = ['Aeropuerto Buenos Aires', 'Paso Cristo Redentor', 'Aeropuerto Mendoza']
+                
+                # TAMBIÉN AGREGAR OPCIÓN "TODOS" PARA PUNTOS
+                opciones_punto = ['🚪 Todos los puntos de entrada'] + puntos_disponibles
+                
+                punto_seleccion = st.selectbox(
+                    "Punto de Entrada",
+                    options=opciones_punto,
+                    help="Selecciona un punto específico o 'Todos'"
+                )
+                
+                predecir_todos_puntos = punto_seleccion.startswith('🚪')
+                
+                if predecir_todos_puntos:
+                    st.info(f"📊 Se predecirá para {len(puntos_disponibles)} puntos")
+            
+            # ══════════════════════════════════════════════════════════════
+            # COLUMNA 3: ECONÓMICAS E INFO
+            # ══════════════════════════════════════════════════════════════
+            with col3:
+                st.markdown("### 💰 Económico")
+                
+                precio_input = st.number_input(
+                    "Precio Promedio (USD)",
+                    min_value=0.0,
+                    max_value=5000.0,
+                    value=850.0,
+                    step=50.0,
+                    help="Precio promedio del alojamiento"
+                )
+                
+                st.markdown("---")
+                st.markdown("### 📊 Histórico")
                 
                 if stats:
-                    st.markdown("### 📈 Estadísticas Históricas")
-                    st.metric("Media Histórica", f"{stats['train']['mean']:,.0f} turistas")
-                    st.metric("Mediana Histórica", f"{stats['train']['median']:,.0f} turistas")
-                    st.metric("Máximo Histórico", f"{stats['train']['max']:,.0f} turistas")
+                    st.metric("Media", f"{stats['train']['mean']:,.0f}")
+                    st.metric("Máximo", f"{stats['train']['max']:,.0f}")
             
-            # Botón de predicción
-            submitted = st.form_submit_button("🔮 Realizar Predicción", use_container_width=True)
+            # ══════════════════════════════════════════════════════════════
+            # BOTÓN DE PREDICCIÓN
+            # ══════════════════════════════════════════════════════════════
+            st.markdown("---")
+            submitted = st.form_submit_button("🔮 Predecir", use_container_width=True)
             
             if submitted:
                 try:
-                    # Crear DataFrame con los inputs
-                    input_df = pd.DataFrame([input_data])
+                    # ═══════════════════════════════════════════════════════
+                    # FUNCIÓN AUXILIAR: CREAR INPUT DATA
+                    # ═══════════════════════════════════════════════════════
                     
-                    # Asegurar orden correcto de columnas
-                    expected_columns = numeric_features + categorical_features
-                    input_df = input_df[expected_columns]
-                    
-                    # Realizar predicción
-                    prediccion = modelo.predict(input_df)[0]
-                    
-                    # Mostrar resultado
-                    st.markdown("---")
-                    st.success("✅ Predicción realizada exitosamente!")
-                    
-                    # Resultado principal
-                    st.markdown("## 🎯 Resultado de la Predicción")
-                    
-                    col_res1, col_res2, col_res3 = st.columns([2, 1, 1])
-                    
-                    with col_res1:
-                        st.markdown(f"""
-                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                                    padding: 2rem; border-radius: 15px; text-align: center; color: white;">
-                            <h1 style="margin: 0; font-size: 3rem;">{prediccion:,.0f}</h1>
-                            <p style="margin: 0.5rem 0 0 0; font-size: 1.2rem;">turistas predichos</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    
-                    with col_res2:
-                        if stats:
-                            diff_mean = ((prediccion - stats['train']['mean']) / stats['train']['mean']) * 100
-                            st.metric(
-                                "vs Media Histórica",
-                                f"{diff_mean:+.1f}%",
-                                delta=f"{prediccion - stats['train']['mean']:,.0f}"
-                            )
-                    
-                    with col_res3:
-                        if stats:
-                            percentil = (prediccion / stats['train']['max']) * 100
-                            st.metric(
-                                "% del Máximo",
-                                f"{percentil:.1f}%"
-                            )
-                    
-                    # Interpretación
-                    st.markdown("### 📊 Interpretación")
-                    
-                    if stats:
-                        mean = stats['train']['mean']
+                    def crear_input_data(pais, punto):
+                        """Crea diccionario de input para un país y punto específico"""
+                        input_data = {}
                         
-                        if prediccion > mean * 1.5:
-                            st.markdown("""
-                            <div class="success-box">
-                                🎉 <strong>Demanda Alta</strong>: La predicción indica una demanda muy superior 
-                                al promedio histórico. Excelente período para maximizar ocupación y precios.
+                        # Variables manuales
+                        if 'año' in numeric_features:
+                            input_data['año'] = año_input
+                        if 'mes' in numeric_features:
+                            input_data['mes'] = mes_input
+                        if 'precio_promedio_usd' in numeric_features:
+                            input_data['precio_promedio_usd'] = precio_input
+                        if 'pais_origen' in categorical_features:
+                            input_data['pais_origen'] = pais
+                        if 'punto_entrada' in categorical_features:
+                            input_data['punto_entrada'] = punto
+                        
+                        # Dummies de meses
+                        meses_nombres = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                                        'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+                        
+                        for i, mes_nom in enumerate(meses_nombres, 1):
+                            posibles = [f'es_{mes_nom}', f'Es{mes_nom.capitalize()}']
+                            for nombre_var in posibles:
+                                if nombre_var in numeric_features:
+                                    input_data[nombre_var] = 1 if mes_input == i else 0
+                                elif nombre_var in categorical_features:
+                                    input_data[nombre_var] = 'Si' if mes_input == i else 'No'
+                        
+                        # Variables de temporada
+                        posibles_temp_alta = ['temporada_alta', 'TemporadaAlta']
+                        for nombre_var in posibles_temp_alta:
+                            if nombre_var in numeric_features:
+                                input_data[nombre_var] = 1 if mes_input in [12, 1, 2] else 0
+                        
+                        posibles_vendimia = ['vendimia', 'Vendimia']
+                        for nombre_var in posibles_vendimia:
+                            if nombre_var in numeric_features:
+                                input_data[nombre_var] = 1 if mes_input == 3 else 0
+                        
+                        posibles_vac = ['vacaciones_invierno', 'VacacionesInvierno']
+                        for nombre_var in posibles_vac:
+                            if nombre_var in numeric_features:
+                                input_data[nombre_var] = 1 if mes_input == 7 else 0
+                        
+                        # Resto de variables numéricas
+                        for feat in numeric_features:
+                            if feat not in input_data:
+                                if df_full is not None and feat in df_full.columns:
+                                    input_data[feat] = float(df_full[feat].median())
+                                else:
+                                    if 'precio' in feat.lower() or 'usd' in feat.lower():
+                                        input_data[feat] = 850.0
+                                    else:
+                                        input_data[feat] = 0.0
+                        
+                        # Resto de variables categóricas
+                        for feat in categorical_features:
+                            if feat not in input_data:
+                                if df_full is not None and feat in df_full.columns:
+                                    input_data[feat] = df_full[feat].mode()[0]
+                                else:
+                                    input_data[feat] = 'Desconocido'
+                        
+                        return input_data
+                    
+                    # ═══════════════════════════════════════════════════════
+                    # DECISIÓN: ¿TODOS LOS PAÍSES O UNO SOLO?
+                    # ═══════════════════════════════════════════════════════
+                    
+                    if predecir_todos_paises:
+                        # ───────────────────────────────────────────────────
+                        # PREDICCIÓN PARA TODOS LOS PAÍSES
+                        # ───────────────────────────────────────────────────
+                        
+                        st.markdown("---")
+                        st.info("🔄 Calculando predicciones para todos los países...")
+                        
+                        predicciones_por_pais = []
+                        
+                        # Determinar qué puntos usar
+                        puntos_a_predecir = puntos_disponibles if predecir_todos_puntos else [punto_seleccion]
+                        
+                        # Progress bar
+                        progress_bar = st.progress(0)
+                        total_combinaciones = len(paises_disponibles) * len(puntos_a_predecir)
+                        contador = 0
+                        
+                        for pais in paises_disponibles:
+                            prediccion_pais_total = 0
+                            desglose_puntos = []
+                            
+                            for punto in puntos_a_predecir:
+                                # Crear input
+                                input_data = crear_input_data(pais, punto)
+                                
+                                # Crear DataFrame
+                                expected_columns = numeric_features + categorical_features
+                                input_df = pd.DataFrame([input_data])
+                                input_df = input_df[expected_columns]
+                                
+                                # Predecir
+                                pred = modelo.predict(input_df)[0]
+                                prediccion_pais_total += pred
+                                
+                                desglose_puntos.append({
+                                    'punto': punto,
+                                    'prediccion': pred
+                                })
+                                
+                                # Actualizar progress
+                                contador += 1
+                                progress_bar.progress(contador / total_combinaciones)
+                            
+                            predicciones_por_pais.append({
+                                'pais': pais,
+                                'prediccion_total': prediccion_pais_total,
+                                'desglose': desglose_puntos
+                            })
+                        
+                        progress_bar.empty()
+                        
+                        # Calcular total general
+                        prediccion_total = sum(p['prediccion_total'] for p in predicciones_por_pais)
+                        
+                        # ───────────────────────────────────────────────────
+                        # MOSTRAR RESULTADOS AGREGADOS
+                        # ───────────────────────────────────────────────────
+                        
+                        st.success("✅ Predicción completada para todos los países!")
+                        
+                        st.markdown("## 🎯 Predicción Total Agregada")
+                        
+                        col_res1, col_res2, col_res3 = st.columns([2, 1, 1])
+                        
+                        with col_res1:
+                            st.markdown(f"""
+                            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                                        padding: 2rem; border-radius: 15px; text-align: center; color: white;">
+                                <h1 style="margin: 0; font-size: 3rem;">{prediccion_total:,.0f}</h1>
+                                <p style="margin: 0.5rem 0 0 0; font-size: 1.2rem;">turistas predichos (TOTAL)</p>
+                                <p style="margin: 0.2rem 0 0 0; font-size: 0.9rem; opacity: 0.8;">
+                                    {mes_nombre} {año_input} • {len(paises_disponibles)} países
+                                </p>
                             </div>
                             """, unsafe_allow_html=True)
-                        elif prediccion > mean:
-                            st.markdown("""
+                        
+                        with col_res2:
+                            promedio_por_pais = prediccion_total / len(paises_disponibles)
+                            st.metric(
+                                "Promedio/País",
+                                f"{promedio_por_pais:,.0f}",
+                                help="Promedio de turistas por país"
+                            )
+                        
+                        with col_res3:
+                            if stats:
+                                diff_mean = ((prediccion_total - stats['train']['mean']) / stats['train']['mean']) * 100
+                                st.metric(
+                                    "vs Media",
+                                    f"{diff_mean:+.1f}%"
+                                )
+                        
+                        # ───────────────────────────────────────────────────
+                        # DESGLOSE POR PAÍS
+                        # ───────────────────────────────────────────────────
+                        
+                        st.markdown("### 🌍 Desglose por País de Origen")
+                        
+                        # Ordenar por predicción (mayor a menor)
+                        predicciones_por_pais.sort(key=lambda x: x['prediccion_total'], reverse=True)
+                        
+                        # Crear DataFrame para visualización
+                        df_paises = pd.DataFrame([
+                            {
+                                'País': p['pais'],
+                                'Turistas Predichos': int(p['prediccion_total']),
+                                '% del Total': f"{(p['prediccion_total']/prediccion_total*100):.1f}%"
+                            }
+                            for p in predicciones_por_pais
+                        ])
+                        
+                        st.dataframe(
+                            df_paises,
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                        
+                        # Gráfico de barras con Altair
+                        st.markdown("#### 📊 Visualización")
+                        
+                        chart_data = pd.DataFrame([
+                            {'País': p['pais'], 'Turistas': p['prediccion_total']}
+                            for p in predicciones_por_pais
+                        ])
+                        
+                        bar_chart = alt.Chart(chart_data).mark_bar().encode(
+                            x=alt.X('Turistas:Q', title='Turistas Predichos'),
+                            y=alt.Y('País:N', sort='-x', title='País de Origen'),
+                            color=alt.Color('Turistas:Q', scale=alt.Scale(scheme='viridis'), legend=None),
+                            tooltip=[
+                                alt.Tooltip('País:N', title='País'),
+                                alt.Tooltip('Turistas:Q', title='Turistas', format=',')
+                            ]
+                        ).properties(
+                            height=400
+                        )
+                        
+                        st.altair_chart(bar_chart, use_container_width=True)
+                        
+                        # Top 5 países
+                        st.markdown("#### 🏆 Top 5 Países")
+                        
+                        cols_top = st.columns(5)
+                        for i, p in enumerate(predicciones_por_pais[:5]):
+                            with cols_top[i]:
+                                medalla = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'][i]
+                                st.metric(
+                                    f"{medalla} {p['pais']}",
+                                    f"{p['prediccion_total']:,.0f}",
+                                    delta=f"{(p['prediccion_total']/prediccion_total*100):.1f}%"
+                                )
+                        
+                        # Desglose detallado (opcional)
+                        if predecir_todos_puntos and len(puntos_a_predecir) > 1:
+                            with st.expander("🔍 Ver desglose por punto de entrada"):
+                                for p in predicciones_por_pais[:10]:  # Primeros 10
+                                    st.markdown(f"**{p['pais']}** ({p['prediccion_total']:,.0f} total):")
+                                    for d in p['desglose']:
+                                        st.write(f"   • {d['punto']}: {d['prediccion']:,.0f} turistas")
+                    
+                    else:
+                        # ───────────────────────────────────────────────────
+                        # PREDICCIÓN PARA UN PAÍS ESPECÍFICO (CÓDIGO ORIGINAL)
+                        # ───────────────────────────────────────────────────
+                        
+                        puntos_a_predecir = puntos_disponibles if predecir_todos_puntos else [punto_seleccion]
+                        
+                        prediccion_total = 0
+                        desglose_puntos = []
+                        
+                        for punto in puntos_a_predecir:
+                            input_data = crear_input_data(pais_seleccion, punto)
+                            
+                            expected_columns = numeric_features + categorical_features
+                            input_df = pd.DataFrame([input_data])
+                            input_df = input_df[expected_columns]
+                            
+                            pred = modelo.predict(input_df)[0]
+                            prediccion_total += pred
+                            
+                            desglose_puntos.append({
+                                'punto': punto,
+                                'prediccion': pred
+                            })
+                        
+                        # Mostrar resultado (igual que antes)
+                        st.markdown("---")
+                        st.success("✅ Predicción realizada exitosamente!")
+                        
+                        st.markdown("## 🎯 Resultado de la Predicción")
+                        
+                        col_res1, col_res2, col_res3 = st.columns([2, 1, 1])
+                        
+                        with col_res1:
+                            texto_adicional = f" • {len(puntos_a_predecir)} puntos" if predecir_todos_puntos else ""
+                            st.markdown(f"""
+                            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                                        padding: 2rem; border-radius: 15px; text-align: center; color: white;">
+                                <h1 style="margin: 0; font-size: 3rem;">{prediccion_total:,.0f}</h1>
+                                <p style="margin: 0.5rem 0 0 0; font-size: 1.2rem;">turistas predichos</p>
+                                <p style="margin: 0.2rem 0 0 0; font-size: 0.9rem; opacity: 0.8;">
+                                    {mes_nombre} {año_input} • {pais_seleccion}{texto_adicional}
+                                </p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        with col_res2:
+                            if stats:
+                                diff_mean = ((prediccion_total - stats['train']['mean']) / stats['train']['mean']) * 100
+                                st.metric(
+                                    "vs Media",
+                                    f"{diff_mean:+.1f}%",
+                                    delta=f"{prediccion_total - stats['train']['mean']:,.0f}"
+                                )
+                        
+                        with col_res3:
+                            if stats:
+                                percentil = (prediccion_total / stats['train']['max']) * 100
+                                st.metric(
+                                    "% Máximo",
+                                    f"{percentil:.1f}%"
+                                )
+                        
+                        # Desglose por punto (si aplica)
+                        if predecir_todos_puntos and len(desglose_puntos) > 1:
+                            st.markdown("### 🚪 Desglose por Punto de Entrada")
+                            
+                            df_puntos = pd.DataFrame([
+                                {
+                                    'Punto de Entrada': d['punto'],
+                                    'Turistas': int(d['prediccion']),
+                                    '% del Total': f"{(d['prediccion']/prediccion_total*100):.1f}%"
+                                }
+                                for d in desglose_puntos
+                            ])
+                            
+                            st.dataframe(df_puntos, use_container_width=True, hide_index=True)
+                        
+                        # Interpretación (igual que antes)
+                        st.markdown("### 📊 Interpretación")
+                        
+                        if stats:
+                            mean = stats['train']['mean']
+                            
+                            if prediccion_total > mean * 1.5:
+                                st.markdown("""
+                                <div class="success-box">
+                                    🎉 <strong>Demanda Muy Alta</strong>: Excelente período. Maximizar tarifas.
+                                </div>
+                                """, unsafe_allow_html=True)
+                            elif prediccion_total > mean:
+                                st.markdown("""
+                                <div class="info-box">
+                                    📈 <strong>Demanda Por Encima del Promedio</strong>: Buena afluencia esperada.
+                                </div>
+                                """, unsafe_allow_html=True)
+                            elif prediccion_total > mean * 0.7:
+                                st.markdown("""
+                                <div class="warning-box">
+                                    📊 <strong>Demanda Moderada</strong>: Implementar promociones selectivas.
+                                </div>
+                                """, unsafe_allow_html=True)
+                            else:
+                                st.markdown("""
+                                <div class="warning-box">
+                                    ⚠️ <strong>Demanda Baja</strong>: Descuentos y campañas de marketing.
+                                </div>
+                                """, unsafe_allow_html=True)
+                    
+                    # ═══════════════════════════════════════════════════════
+                    # INCERTIDUMBRE (COMÚN A AMBOS CASOS)
+                    # ═══════════════════════════════════════════════════════
+                    
+                    if metadata:
+                        rmse = metadata['metricas']['test_rmse']
+                        
+                        if predecir_todos_paises:
+                            rmse_ajustado = rmse * np.sqrt(len(paises_disponibles))
+                            st.markdown(f"""
                             <div class="info-box">
-                                📈 <strong>Demanda Por Encima del Promedio</strong>: Se espera una buena afluencia 
-                                de turistas. Período favorable para el sector.
-                            </div>
-                            """, unsafe_allow_html=True)
-                        elif prediccion > mean * 0.7:
-                            st.markdown("""
-                            <div class="warning-box">
-                                📊 <strong>Demanda Moderada</strong>: Afluencia cercana al promedio. 
-                                Considerar estrategias para aumentar ocupación.
+                                📊 <strong>Intervalo de Confianza (aproximado):</strong><br>
+                                RMSE ajustado: {rmse_ajustado:,.0f} turistas<br>
+                                Rango: <strong>{max(0, prediccion_total - rmse_ajustado):,.0f} - {prediccion_total + rmse_ajustado:,.0f} turistas</strong>
                             </div>
                             """, unsafe_allow_html=True)
                         else:
-                            st.markdown("""
-                            <div class="warning-box">
-                                ⚠️ <strong>Demanda Baja</strong>: Predicción por debajo del promedio. 
-                                Recomendable implementar promociones y descuentos.
+                            st.markdown(f"""
+                            <div class="info-box">
+                                📊 <strong>Intervalo de Confianza (~68%):</strong><br>
+                                RMSE: {rmse:,.0f} turistas<br>
+                                Rango: <strong>{max(0, prediccion_total - rmse):,.0f} - {prediccion_total + rmse:,.0f} turistas</strong>
                             </div>
                             """, unsafe_allow_html=True)
-                    
-                    # Mostrar datos ingresados
-                    with st.expander("📋 Ver datos ingresados"):
-                        st.dataframe(input_df, use_container_width=True)
-                    
-                    # Advertencia sobre incertidumbre
-                    if metadata:
-                        rmse = metadata['metricas']['test_rmse']
-                        st.markdown(f"""
-                        <div class="info-box">
-                            📊 <strong>Incertidumbre de la predicción:</strong> El modelo tiene un RMSE de {rmse:,.0f} turistas.
-                            Esto significa que la predicción real podría estar en el rango de 
-                            <strong>{prediccion - rmse:,.0f} a {prediccion + rmse:,.0f} turistas</strong> 
-                            con aproximadamente 68% de confianza.
-                        </div>
-                        """, unsafe_allow_html=True)
                 
                 except Exception as e:
-                    st.error(f"❌ Error al realizar la predicción: {str(e)}")
-                    st.exception(e)
+                    st.error(f"❌ Error: {str(e)}")
+                    with st.expander("🔍 Detalles técnicos"):
+                        st.exception(e)
     
     else:
-        st.error("❌ Modelo no disponible. Por favor verifica que el archivo del modelo exista.")
-
+        st.error("❌ Modelo no disponible.")
 # ═══════════════════════════════════════════════════════════════════════════
 # FOOTER
 # ═══════════════════════════════════════════════════════════════════════════

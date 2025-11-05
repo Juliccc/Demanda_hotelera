@@ -8,12 +8,12 @@
     "descripcion": "Modelo de predicción de turistas en Mendoza con categorías normalizadas"
   },
   "metricas": {
-    "test_rmse": 7400.255839259332,
-    "test_mae": 3883.4135603711325,
-    "test_r2": 0.7938201274639194,
-    "train_rmse": 5157.689428620423,
-    "train_r2": 0.8890555887886,
-    "overfitting_ratio": 1.434800590782906
+    "test_rmse": 7396.605719890834,
+    "test_mae": 3928.747501717287,
+    "test_r2": 0.7940234705807103,
+    "train_rmse": 5010.162679460327,
+    "train_r2": 0.8953115644162284,
+    "overfitting_ratio": 1.476320469635442
   },
   "dataset_info": {
     "n_registros_train": 1990,
@@ -85,7 +85,7 @@
     "categorical_encoder": "OneHotEncoder"
   },
   "training_info": {
-    "fecha_entrenamiento": "2025-11-05 15:28:09",
+    "fecha_entrenamiento": "2025-11-05 17:58:35",
     "autor": "Juliccc",
     "entrega": "4 - Visualización e Integración",
     "random_state": 42

@@ -1,23 +1,30 @@
 {
+  "version": "2.0",
   "model_info": {
     "nombre": "Gradient Boosting",
     "tipo": "regresion",
     "framework": "scikit-learn",
-    "version_sklearn": "1.3.0"
+    "version_sklearn": "1.3.0",
+    "descripcion": "Modelo de predicción de turistas en Mendoza con categorías normalizadas"
   },
   "metricas": {
-    "test_rmse": 5157.861935605436,
-    "test_mae": 2914.2044851503597,
-    "test_r2": 0.8998404824445432,
-    "train_rmse": 912.435712688425,
-    "overfitting_ratio": 5.652849689988759
+    "test_rmse": 7400.255839259332,
+    "test_mae": 3883.4135603711325,
+    "test_r2": 0.7938201274639194,
+    "train_rmse": 5157.689428620423,
+    "train_r2": 0.8890555887886,
+    "overfitting_ratio": 1.434800590782906
   },
   "dataset_info": {
     "n_registros_train": 1990,
     "n_registros_test": 498,
-    "n_features": 27,
-    "fecha_corte_train_test": "2023-06-01",
-    "registros_eliminados_ceros": 389
+    "n_registros_total": 2488,
+    "n_features_input": 27,
+    "fecha_corte_train_test": "Split temporal 80/20",
+    "periodo_datos": {
+      "inicio": "2014-01",
+      "fin": "2025-12"
+    }
   },
   "features": {
     "numericas": [
@@ -50,7 +57,26 @@
     "categoricas": [
       "pais_origen",
       "punto_entrada"
-    ]
+    ],
+    "categorias_unicas": {
+      "pais_origen": [
+        "Bolivia",
+        "Brasil",
+        "Chile",
+        "EEUU, Canadá y México",
+        "Europa y Resto del Mundo",
+        "Paraguay",
+        "Resto de América",
+        "Uruguay"
+      ],
+      "punto_entrada": [
+        "Aeropuerto Buenos Aires",
+        "Aeropuerto Córdoba",
+        "Aeropuerto Mendoza",
+        "Paso Cristo Redentor",
+        "Puerto Buenos Aires"
+      ]
+    }
   },
   "preprocessing": {
     "numeric_imputer": "median",
@@ -59,9 +85,19 @@
     "categorical_encoder": "OneHotEncoder"
   },
   "training_info": {
-    "fecha_entrenamiento": "2025-11-04 15:48:27",
+    "fecha_entrenamiento": "2025-11-05 15:28:09",
     "autor": "Juliccc",
     "entrega": "4 - Visualización e Integración",
     "random_state": 42
+  },
+  "limpieza_datos": {
+    "categorias_normalizadas": true,
+    "mapeos_aplicados": {
+      "pais_origen": {
+        "EEUU variantes": "EEUU, Canadá y México",
+        "Europa variantes": "Europa y Resto del Mundo",
+        "Resto América variantes": "Resto de América"
+      }
+    }
   }
 }

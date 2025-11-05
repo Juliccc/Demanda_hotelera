@@ -1,4 +1,8 @@
 [theme]
+# Tema oscuro por defecto
+base = "dark"
+
+[theme]
 primaryColor = "#1f77b4"
 backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#f0f2f6"

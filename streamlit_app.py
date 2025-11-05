@@ -219,7 +219,7 @@ if pagina == "🏠 Inicio":
         para predecir la demanda turística mensual en Mendoza.
         
         **Objetivo:**
-        - Predecir el número de turistas que visitarán Mendoza en un mes específico
+        - Predecir el número de turistas que visitarán las provincias centrales en un mes específico
         - Ayudar en la planificación hotelera y gestión de recursos turísticos
         - Proporcionar insights sobre tendencias y patrones de turismo
         
@@ -767,17 +767,39 @@ elif pagina == "🔮 Hacer Predicciones":
                     st.warning("📉 Temporada Baja")
             
             # ══════════════════════════════════════════════════════════════
-            # COLUMNA 2: ORIGEN Y ENTRADA
+            # COLUMNA 2: ORIGEN Y ENTRADA (CORREGIDO - USA METADATA)
             # ══════════════════════════════════════════════════════════════
             with col2:
                 st.markdown("### 🌍 Origen")
+        
+                # ═══════════════════════════════════════════════════════════
+                # PAÍS DE ORIGEN - USAR METADATA (CATEGORÍAS LIMPIAS)
+                # ═══════════════════════════════════════════════════════════
                 
-                # País de origen CON OPCIÓN "TODOS"
                 paises_disponibles = []
-                if df_full is not None and 'pais_origen' in df_full.columns:
+                
+                # PRIORIDAD 1: Usar metadata (SIEMPRE PRIMERO)
+                if metadata and 'categorias_unicas' in metadata.get('features', {}):
+                    paises_disponibles = metadata['features']['categorias_unicas'].get('pais_origen', [])
+                    st.caption(f"✅ {len(paises_disponibles)} países del modelo")
+                
+                # PRIORIDAD 2: df_full solo como fallback
+                elif df_full is not None and 'pais_origen' in df_full.columns:
                     paises_disponibles = sorted(df_full['pais_origen'].unique().tolist())
+                    st.caption(f"⚠️ Usando dataset ({len(paises_disponibles)} países - puede tener duplicados)")
+                
+                # PRIORIDAD 3: Valores por defecto limpios
                 else:
-                    paises_disponibles = ['Chile', 'Brasil', 'Estados Unidos', 'Uruguay', 'Paraguay']
+                    paises_disponibles = [
+                        'Brasil',
+                        'Chile',
+                        'EEUU, Canadá y México',
+                        'Europa y Resto del Mundo',
+                        'Paraguay',
+                        'Resto de América',
+                        'Uruguay'
+                    ]
+                    st.caption(f"ℹ️ Valores por defecto")
                 
                 # AGREGAR OPCIÓN "TODOS"
                 opciones_pais = ['🌎 Todos los países (Total)'] + paises_disponibles
@@ -796,14 +818,34 @@ elif pagina == "🔮 Hacer Predicciones":
                 
                 st.markdown("### 🚪 Entrada")
                 
-                # Punto de entrada
-                puntos_disponibles = []
-                if df_full is not None and 'punto_entrada' in df_full.columns:
-                    puntos_disponibles = sorted(df_full['punto_entrada'].unique().tolist())
-                else:
-                    puntos_disponibles = ['Aeropuerto Buenos Aires', 'Paso Cristo Redentor', 'Aeropuerto Mendoza']
+                # ═══════════════════════════════════════════════════════════
+                # PUNTO DE ENTRADA - USAR METADATA (CATEGORÍAS LIMPIAS)
+                # ═══════════════════════════════════════════════════════════
                 
-                # TAMBIÉN AGREGAR OPCIÓN "TODOS" PARA PUNTOS
+                puntos_disponibles = []
+                
+                # PRIORIDAD 1: Usar metadata (SIEMPRE PRIMERO)
+                if metadata and 'categorias_unicas' in metadata.get('features', {}):
+                    puntos_disponibles = metadata['features']['categorias_unicas'].get('punto_entrada', [])
+                    st.caption(f"✅ {len(puntos_disponibles)} puntos del modelo")
+                
+                # PRIORIDAD 2: df_full solo como fallback
+                elif df_full is not None and 'punto_entrada' in df_full.columns:
+                    puntos_disponibles = sorted(df_full['punto_entrada'].unique().tolist())
+                    st.caption(f"⚠️ Usando dataset")
+                
+                # PRIORIDAD 3: Valores por defecto
+                else:
+                    puntos_disponibles = [
+                        'Aeropuerto Buenos Aires',
+                        'Aeropuerto Córdoba',
+                        'Aeropuerto Mendoza',
+                        'Paso Cristo Redentor',
+                        'Puerto Buenos Aires'
+                    ]
+                    st.caption(f"ℹ️ Valores por defecto")
+                
+                # AGREGAR OPCIÓN "TODOS" PARA PUNTOS
                 opciones_punto = ['🚪 Todos los puntos de entrada'] + puntos_disponibles
                 
                 punto_seleccion = st.selectbox(

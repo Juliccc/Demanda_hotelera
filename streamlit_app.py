@@ -166,7 +166,6 @@ st.markdown("""
 # ═══════════════════════════════════════════════════════════════════════════
 # SIDEBAR - NAVEGACIÓN
 # ═══════════════════════════════════════════════════════════════════════════
-st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/1/14/Bandera_de_Mendoza.svg/320px-Bandera_de_Mendoza.svg.png", width=200)
 st.sidebar.title("Navegación")
 st.sidebar.markdown("---")
 fecha_actual = datetime.now()
@@ -199,8 +198,7 @@ st.sidebar.markdown(f"""
 ### 📅 Fecha
 {fecha_actual.strftime("%d de %B, %Y")}
 
-### 🎓 Proyecto
-Entrega 4 - Visualización e Integración  
+### 🎓 Cátedra  
 *Ciencia de Datos*
 """)
 
@@ -310,7 +308,7 @@ elif pagina == "📊 Exploración de Datos":
         st.subheader("🔍 Vista General del Dataset")
         
         # Tabs para diferentes vistas
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 Datos", "📈 Estadísticas", "🗺️ Distribuciones", "🔗 Correlaciones"])
+        tab1, tab2, tab4 = st.tabs(["📋 Datos", "📈 Estadísticas", "🔗 Correlaciones"])
         
         with tab1:
             st.markdown("### Primeros registros del dataset")
@@ -339,35 +337,7 @@ elif pagina == "📊 Exploración de Datos":
             with col4:
                 st.metric("Máximo", f"{df_full['turistas'].max():,.0f}")
         
-        with tab3:
-            st.markdown("### Distribución de Turistas")
-            
-            # Histograma interactivo con Plotly
-            fig = px.histogram(
-                df_full, 
-                x='turistas', 
-                nbins=50,
-                title="Distribución del Número de Turistas",
-                labels={'turistas': 'Número de Turistas', 'count': 'Frecuencia'},
-                color_discrete_sequence=['#1f77b4']
-            )
-            fig.update_layout(showlegend=False, height=400)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Boxplot
-            if 'año' in df_full.columns:
-                st.markdown("### Distribución por Año")
-                fig2 = px.box(
-                    df_full, 
-                    x='año', 
-                    y='turistas',
-                    title="Distribución de Turistas por Año",
-                    labels={'turistas': 'Número de Turistas', 'año': 'Año'},
-                    color='año',
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                fig2.update_layout(showlegend=False, height=400)
-                st.plotly_chart(fig2, use_container_width=True)
+
         
         with tab4:
             st.markdown("### Matriz de Correlación")
@@ -468,7 +438,7 @@ elif pagina == "📈 Visualizaciones":
         
         st.markdown("""
         **💡 Insights:**
-        - 🔴 Fuerte caída en 2020-2021 debido a la pandemia COVID-19
+        - 🔴 Fuerte caída en 2020-2021 debido a la pandemia 
         - 🟢 Recuperación progresiva desde 2022
         - 📊 Tendencia general al crecimiento pre-pandemia
         """)
@@ -705,7 +675,7 @@ elif pagina == "📈 Visualizaciones":
                     - **Promedio mensual:** {promedio:,.0f} turistas
                     """)
                 else:
-                    st.warning(f"⚠️ No hay datos suficientes para {pais}")
+                    st.warning(f"No hay datos suficientes para {pais}")
                 
             else:
                 # Mensaje si no hay país seleccionado
@@ -730,7 +700,7 @@ elif pagina == "📈 Visualizaciones":
                 **Patrones Estacionales Generales:**
                 - 🌞 **Verano (Dic-Feb):** Temporada alta natural
                 - 🍷 **Marzo:** Pico por Fiesta de la Vendimia
-                - ❄️ **Invierno (May-Ago):** Baja demanda excepto julio (nieve)
+                - ❄️ **Invierno (May-Ago):** Baja demanda excepto julio 
                 - 🌸 **Primavera (Sep-Nov):** Recuperación gradual
                 
                 **Recomendaciones Estratégicas:**
@@ -741,7 +711,7 @@ elif pagina == "📈 Visualizaciones":
                 """)
 
         else:
-            st.warning("⚠️ Datos de 'pais_origen' no disponibles.")
+            st.warning("Datos de 'pais_origen' no disponibles.")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PÁGINA 4: INFORMACIÓN DEL MODELO
@@ -838,10 +808,6 @@ elif pagina == "🤖 Información del Modelo":
         
         st.markdown("---")
         
-        # Información de entrenamiento
-        st.subheader("⏱️ Información de Entrenamiento")
-        st.json(metadata['training_info'])
-        
         # Interpretación de métricas
         st.markdown("---")
         st.subheader("📊 Interpretación de las Métricas")
@@ -862,11 +828,11 @@ elif pagina == "🤖 Información del Modelo":
         """)
         
         if r2 >= 0.7:
-            st.success(f"✅ **Excelente**: R² ≥ 0.70 indica un modelo con muy buena capacidad predictiva")
+            st.success(f" R² ≥ 0.70 indica un modelo con muy buena capacidad predictiva")
         elif r2 >= 0.5:
-            st.info(f"✓ **Bueno**: R² ≥ 0.50 indica un modelo con capacidad predictiva aceptable")
+            st.info(f"R² ≥ 0.50 indica un modelo con capacidad predictiva aceptable")
         else:
-            st.warning(f"⚠️ **Regular**: R² < 0.50 sugiere limitaciones en la capacidad predictiva")
+            st.warning(f"*R² < 0.50 sugiere limitaciones en la capacidad predictiva")
     
     else:
         st.error("❌ No se pudieron cargar los metadatos del modelo.")
@@ -1442,7 +1408,7 @@ elif pagina == "🔮 Hacer Predicciones":
                         st.exception(e)
     
     else:
-        st.error("❌ Modelo no disponible.")
+        st.error("Modelo no disponible.")
 # ═══════════════════════════════════════════════════════════════════════════
 # FOOTER
 # ═══════════════════════════════════════════════════════════════════════════

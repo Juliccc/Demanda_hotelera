@@ -85,7 +85,7 @@
     "categorical_encoder": "OneHotEncoder"
   },
   "training_info": {
-    "fecha_entrenamiento": "2025-11-05 17:58:35",
+    "fecha_entrenamiento": "2025-11-12 00:44:32",
     "autor": "Juliccc",
     "entrega": "4 - Visualización e Integración",
     "random_state": 42

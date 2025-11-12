@@ -456,9 +456,9 @@ elif pagina == "📈 Visualizaciones":
             # PREPARAR DATOS
             # ───────────────────────────────────────────────────────────────
             
-            # Top 10 países
+            # Top 8 países
             top_paises = df_full.groupby('pais_origen').agg({'turistas': 'sum'}).reset_index()
-            top_paises = top_paises.nlargest(10, 'turistas')
+            top_paises = top_paises.nlargest(8, 'turistas')
             top_paises_list = top_paises['pais_origen'].tolist()
             
             # ───────────────────────────────────────────────────────────────
@@ -472,7 +472,7 @@ elif pagina == "📈 Visualizaciones":
             # GRÁFICO DE PAÍSES (CON CLICK)
             # ───────────────────────────────────────────────────────────────
             
-            st.markdown("### 📊 Top 10 Países de Origen")
+            st.markdown("### 📊 Top 8 Países de Origen")
             st.caption("👆 **Click en una barra** para ver su estacionalidad mensual")
             
             # Selector manual y reset

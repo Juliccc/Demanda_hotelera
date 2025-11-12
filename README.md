@@ -1,5 +1,5 @@
-📄 README – Pipeline ETL Turismo Mendoza
-🏨 Proyecto: ETL de Demanda Hotelera Argentina – Primera Entrega
+README
+Proyecto:Demanda Hotelera Argentina 
 
 DAG: mza_turismo_etl_final
 Objetivo: Automatizar la descarga, validación y reporte de datos de turismo en Argentina, integrando datos de YVERA y ETI para su posterior análisis exploratorio.

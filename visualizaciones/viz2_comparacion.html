@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    #vis.vega-embed {
+      width: 100%;
+      display: flex;
+    }
+
+    #vis.vega-embed details,
+    #vis.vega-embed details summary {
+      position: relative;
+    }
+  </style>
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/vega@5"></script>
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/vega-lite@5.20.1"></script>
+  <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/vega-embed@6"></script>
+</head>
+<body>
+  <div id="vis"></div>
+  <script>
+    (function(vegaEmbed) {
+      var spec = {"config": {"view": {"continuousWidth": 300, "continuousHeight": 300}}, "data": {"name": "data-db17fc4a78fda21219d544395efb9b69"}, "facet": {"column": {"field": "M\u00e9trica", "header": {"labelFontSize": 13, "labelFontWeight": "bold"}, "title": null, "type": "nominal"}}, "spec": {"mark": {"type": "bar"}, "encoding": {"color": {"condition": {"param": "param_24", "empty": false, "field": "Modelo", "legend": {"orient": "bottom", "title": "Modelo"}, "scale": {"scheme": "category10"}, "type": "nominal"}, "value": "lightgray"}, "tooltip": [{"field": "Modelo", "title": "Modelo", "type": "nominal"}, {"field": "M\u00e9trica", "title": "M\u00e9trica", "type": "nominal"}, {"field": "Valor", "format": ",.2f", "title": "Valor", "type": "quantitative"}], "x": {"axis": {"labelAngle": -45}, "field": "Modelo", "title": null, "type": "nominal"}, "y": {"field": "Valor", "title": "Valor", "type": "quantitative"}}, "height": 300, "name": "view_18", "width": 220}, "params": [{"name": "param_24", "select": {"type": "point", "fields": ["Modelo"], "on": "mouseover"}, "views": ["view_18"]}], "resolve": {"scale": {"y": "independent"}}, "title": {"text": "Comparaci\u00f3n de Modelos - M\u00e9tricas de Performance", "subtitle": "Hover sobre un modelo para destacarlo | RMSE y MAE: menor mejor | R\u00b2: mayor mejor", "fontSize": 16}, "$schema": "https://vega.github.io/schema/vega-lite/v5.20.1.json", "datasets": {"data-db17fc4a78fda21219d544395efb9b69": [{"Modelo": "Random Forest", "M\u00e9trica": "RMSE", "Valor": 7704.905100314583}, {"Modelo": "Random Forest", "M\u00e9trica": "R\u00b2 (%)", "Valor": 77.64949263703562}, {"Modelo": "Random Forest", "M\u00e9trica": "MAE", "Valor": 3912.33276632075}, {"Modelo": "Gradient Boosting", "M\u00e9trica": "RMSE", "Valor": 7400.255839259332}, {"Modelo": "Gradient Boosting", "M\u00e9trica": "R\u00b2 (%)", "Valor": 79.38201274639194}, {"Modelo": "Gradient Boosting", "M\u00e9trica": "MAE", "Valor": 3883.4135603711325}]}};
+      var embedOpt = {"mode": "vega-lite"};
+
+      function showError(el, error){
+          el.innerHTML = ('<div style="color:red;">'
+                          + '<p>JavaScript Error: ' + error.message + '</p>'
+                          + "<p>This usually means there's a typo in your chart specification. "
+                          + "See the javascript console for the full traceback.</p>"
+                          + '</div>');
+          throw error;
+      }
+      const el = document.getElementById('vis');
+      vegaEmbed("#vis", spec, embedOpt)
+        .catch(error => showError(el, error));
+    })(vegaEmbed);
+
+  </script>
+</body>
+</html>

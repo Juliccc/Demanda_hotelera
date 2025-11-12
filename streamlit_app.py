@@ -132,14 +132,36 @@ def cargar_datos_muestra():
 
 @st.cache_data
 def cargar_datos_completos():
-    """Carga el dataset completo"""
+    """Carga el dataset completo CON FILTRADO por metadata"""
     try:
+        # Cargar dataset completo
         df = pd.read_csv('mendoza_turismo_final_filtrado.csv', sep=';', encoding='utf-8')
-        # Eliminar registros con 0 turistas (coherente con el notebook)
         df = df[df['turistas'] > 0].copy()
-        return df
+        
+        # NUEVO: Filtrar por categorías válidas del metadata
+        metadata_temp = cargar_metadata()
+        if metadata_temp and 'categorias_unicas' in metadata_temp.get('features', {}):
+            paises_validos = metadata_temp['features']['categorias_unicas']['pais_origen']
+            puntos_validos = metadata_temp['features']['categorias_unicas']['punto_entrada']
+            
+            # Aplicar filtros
+            df_limpio = df[
+                df['pais_origen'].isin(paises_validos) &
+                df['punto_entrada'].isin(puntos_validos)
+            ].copy()
+            
+            registros_eliminados = len(df) - len(df_limpio)
+            if registros_eliminados > 0:
+                st.info(f"🧹 Dataset limpiado: {registros_eliminados:,} registros duplicados eliminados")
+            
+            st.success(f"✅ Cargados {len(df_limpio):,} registros | {df_limpio['turistas'].sum():,.0f} turistas totales")
+            return df_limpio
+        else:
+            st.warning("⚠️ No se encontró metadata. Usando dataset sin filtrar.")
+            return df
+            
     except FileNotFoundError:
-        st.warning("⚠️ No se encontró el dataset completo. Usando datos de muestra.")
+        st.error("❌ Archivo 'mendoza_turismo_final_filtrado.csv' no encontrado")
         return cargar_datos_muestra()
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -482,27 +504,39 @@ elif pagina == "📈 Visualizaciones":
 
         if 'pais_origen' in df_full.columns:
             
-            # ───────────────────────────────────────────────────────────────
-            # PREPARAR DATOS
-            # ───────────────────────────────────────────────────────────────
-            
-            # Top 10 países
-            top_paises = df_full.groupby('pais_origen').agg({'turistas': 'sum'}).reset_index()
-            top_paises = top_paises.nlargest(10, 'turistas')
-            top_paises_list = top_paises['pais_origen'].tolist()
-            
-            # ───────────────────────────────────────────────────────────────
-            # ESTADO DE SESIÓN PARA PAÍS SELECCIONADO
-            # ───────────────────────────────────────────────────────────────
-            
+            # INICIALIZAR SESSION STATE (CRÍTICO)
             if 'pais_seleccionado_viz' not in st.session_state:
                 st.session_state.pais_seleccionado_viz = None
             
+            # Filtrar por metadata ANTES de agrupar
+            if metadata and 'categorias_unicas' in metadata.get('features', {}):
+                paises_validos = metadata['features']['categorias_unicas']['pais_origen']
+            else:
+                paises_validos = [
+                    "Bolivia", "Brasil", "Chile", "EEUU, Canadá y México",
+                    "Europa y Resto del Mundo", "Paraguay", "Resto de América", "Uruguay"
+                ]
+            
+            # Filtrar dataset
+            df_paises_limpio = df_full[df_full['pais_origen'].isin(paises_validos)]
+            
+            # Agrupar (ahora máximo 8 países)
+            top_paises = df_paises_limpio.groupby('pais_origen').agg({'turistas': 'sum'}).reset_index()
+            top_paises = top_paises.sort_values('turistas', ascending=False)
+            top_paises_list = top_paises['pais_origen'].tolist()
+            
+            st.caption(f"✅ Mostrando {len(top_paises)} países según metadata del modelo")
+
+            # ───────────────────────────────────────────────────────────────
+            # INICIALIZAR SESSION STATE (¡CRÍTICO - ANTES DE USARLO!)
+            # ───────────────────────────────────────────────────────────────
+        
+
             # ───────────────────────────────────────────────────────────────
             # GRÁFICO DE PAÍSES (CON CLICK)
             # ───────────────────────────────────────────────────────────────
-            
-            st.markdown("### 📊 Top 10 Países de Origen")
+
+            st.markdown(f"### 📊 Top {len(top_paises)} Países de Origen")
             st.caption("👆 **Click en una barra** para ver su estacionalidad mensual")
             
             # Selector manual y reset

@@ -25,7 +25,7 @@ import plotly.graph_objects as go
 # CONFIGURACIÓN DE LA PÁGINA
 # ═══════════════════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Predictor Turismo Mendoza",
+    page_title="Predictor Turismo Argentina",
     page_icon="🏔️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -60,7 +60,7 @@ st.markdown("""
         margin: 1rem 0;
     }
     .warning-box {
-        background-color: #fff3cd;
+        background-color: #c19c28;
         padding: 1rem;
         border-radius: 5px;
         border-left: 4px solid #ff9800;
@@ -154,11 +154,11 @@ df_full = cargar_datos_completos()
 # ═══════════════════════════════════════════════════════════════════════════
 # ENCABEZADO PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════
-st.markdown('<div class="main-header">🏔️ Predictor de Turismo en Mendoza</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🏔️ Predictor de Turismo en Argentina</div>', unsafe_allow_html=True)
 
 st.markdown("""
 <div class="info-box">
-    📊 <strong>Aplicación de Machine Learning</strong> para predecir la demanda turística mensual en Mendoza, Argentina.
+    📊 <strong>Aplicación de Machine Learning</strong> para predecir la demanda turística mensual en Argentina.
     Basada en datos históricos de 2014-2025 y modelos de regresión entrenados con Scikit-learn.
 </div>
 """, unsafe_allow_html=True)
@@ -167,7 +167,7 @@ st.markdown("""
 # SIDEBAR - NAVEGACIÓN
 # ═══════════════════════════════════════════════════════════════════════════
 st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/1/14/Bandera_de_Mendoza.svg/320px-Bandera_de_Mendoza.svg.png", width=200)
-st.sidebar.title("📂 Navegación")
+st.sidebar.title("Navegación")
 st.sidebar.markdown("---")
 fecha_actual = datetime.now()
 
@@ -216,7 +216,7 @@ if pagina == "🏠 Inicio":
         st.subheader("📋 Sobre este Proyecto")
         st.markdown("""
         Esta aplicación es el resultado de un proyecto completo de **Machine Learning** 
-        para predecir la demanda turística mensual en Mendoza.
+        para predecir la demanda turística mensual en Argentina.
         
         **Objetivo:**
         - Predecir el número de turistas que visitarán las provincias centrales en un mes específico
@@ -244,7 +244,7 @@ if pagina == "🏠 Inicio":
                 if 'año' in df_full.columns:
                     st.metric("Años Analizados", df_full['año'].nunique())
                 if 'pais_origen' in df_full.columns:
-                    st.metric("Países de Origen", df_full['pais_origen'].nunique())
+                    st.metric("Puntos de Origen", df_full['pais_origen'].nunique())
     
     st.markdown("---")
     
@@ -322,8 +322,7 @@ elif pagina == "📊 Exploración de Datos":
                 st.metric("Filas", f"{len(df_full):,}")
             with col2:
                 st.metric("Columnas", df_full.shape[1])
-            with col3:
-                st.metric("Valores Nulos", df_full.isnull().sum().sum())
+
         
         with tab2:
             st.markdown("### Estadísticas Descriptivas")
@@ -477,92 +476,198 @@ elif pagina == "📈 Visualizaciones":
         st.markdown("---")
         
         # ═══════════════════════════════════════════════════════════════════
-        # VISUALIZACIÓN 2: ESTACIONALIDAD
+        # VISUALIZACIÓN 2+3 FUSIONADA: PAÍSES Y ESTACIONALIDAD
         # ═══════════════════════════════════════════════════════════════════
-        st.subheader("📊 2. Estacionalidad Mensual")
-        
-        # Agregar por mes (promedio across años)
-        df_mensual = df_full.groupby('mes').agg({'turistas': 'mean'}).reset_index()
-        df_mensual['mes_nombre'] = df_mensual['mes'].map({
-            1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
-            5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
-            9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
-        })
-        
-        bar_chart = alt.Chart(df_mensual).mark_bar(
-            cornerRadiusTopLeft=5,
-            cornerRadiusTopRight=5
-        ).encode(
-            x=alt.X('mes_nombre:N', title='Mes', sort=[
-                'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-                'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-            ]),
-            y=alt.Y('turistas:Q', title='Promedio de Turistas', axis=alt.Axis(format=',')),
-            color=alt.Color('turistas:Q', scale=alt.Scale(scheme='blues'), legend=None),
-            tooltip=[
-                alt.Tooltip('mes_nombre:N', title='Mes'),
-                alt.Tooltip('turistas:Q', title='Promedio Turistas', format=',')
-            ]
-        ).properties(
-            width=800,
-            height=400,
-            title='Promedio de Turistas por Mes (Estacionalidad)'
-        )
-        
-        st.altair_chart(bar_chart, use_container_width=True)
-        
-        st.markdown("""
-        **💡 Insights:**
-        - 📅 Identificación de temporada alta y baja
-        - 🌞 Patrones estacionales claros
-        - 📊 Útil para planificación de recursos
-        """)
-        
-        st.markdown("---")
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # VISUALIZACIÓN 3: TOP PAÍSES
-        # ═══════════════════════════════════════════════════════════════════
+        st.subheader("🌍 2. Análisis de Países de Origen y Estacionalidad")
+
         if 'pais_origen' in df_full.columns:
-            st.subheader("🌍 3. Principales Países de Origen")
             
+            # ───────────────────────────────────────────────────────────────
+            # PREPARAR DATOS
+            # ───────────────────────────────────────────────────────────────
+            
+            # Top 10 países
             top_paises = df_full.groupby('pais_origen').agg({'turistas': 'sum'}).reset_index()
             top_paises = top_paises.nlargest(10, 'turistas')
+            top_paises_list = top_paises['pais_origen'].tolist()
             
-            # Selector interactivo
-            selection = alt.selection_point(fields=['pais_origen'], on='mouseover')
+            # ───────────────────────────────────────────────────────────────
+            # LAYOUT: DOS COLUMNAS
+            # ───────────────────────────────────────────────────────────────
             
-            paises_chart = alt.Chart(top_paises).mark_bar().encode(
-                x=alt.X('turistas:Q', title='Total de Turistas', axis=alt.Axis(format=',')),
-                y=alt.Y('pais_origen:N', title='País de Origen', sort='-x'),
-                color=alt.condition(
-                    selection,
-                    alt.Color('turistas:Q', scale=alt.Scale(scheme='viridis'), legend=None),
-                    alt.value('lightgray')
-                ),
-                tooltip=[
-                    alt.Tooltip('pais_origen:N', title='País'),
-                    alt.Tooltip('turistas:Q', title='Total Turistas', format=',')
-                ]
-            ).add_params(
-                selection
-            ).properties(
-                width=800,
-                height=400,
-                title='Top 10 Países de Origen de Turistas'
-            )
+            col1, col2 = st.columns([1, 1.2])
             
-            st.altair_chart(paises_chart, use_container_width=True)
+            with col1:
+                st.markdown("### 📊 Top 10 Países de Origen")
+                
+                # Selector interactivo
+                selection = alt.selection_point(fields=['pais_origen'], on='mouseover', empty=False)
+                
+                paises_chart = alt.Chart(top_paises).mark_bar().encode(
+                    x=alt.X('turistas:Q', 
+                        title='Total de Turistas', 
+                        axis=alt.Axis(format=',')),
+                    y=alt.Y('pais_origen:N', 
+                        title='País de Origen', 
+                        sort='-x'),
+                    color=alt.condition(
+                        selection,
+                        alt.Color('turistas:Q', 
+                                scale=alt.Scale(scheme='viridis'), 
+                                legend=None),
+                        alt.value('lightgray')
+                    ),
+                    tooltip=[
+                        alt.Tooltip('pais_origen:N', title='País'),
+                        alt.Tooltip('turistas:Q', title='Total Turistas', format=',')
+                    ]
+                ).add_params(
+                    selection
+                ).properties(
+                    height=400,
+                    title='Total de Turistas por País'
+                )
+                
+                st.altair_chart(paises_chart, use_container_width=True)
+                
+                st.markdown("""
+                **💡 Insights:**
+                - 🌎 Principales mercados turísticos
+                - 🎯 Base para estrategias de marketing
+                - 📊 **Hover sobre un país** para destacarlo
+                """)
+            
+            with col2:
+                st.markdown("### 📈 Estacionalidad Mensual por País")
+                
+                # ───────────────────────────────────────────────────────────
+                # SELECTOR DE PAÍS
+                # ───────────────────────────────────────────────────────────
+                
+                pais_seleccionado = st.selectbox(
+                    "Selecciona un país para ver su estacionalidad:",
+                    options=['🌎 Todos los países'] + top_paises_list,
+                    key='selector_pais_estacionalidad'
+                )
+                
+                # ───────────────────────────────────────────────────────────
+                # FILTRAR DATOS SEGÚN SELECCIÓN
+                # ───────────────────────────────────────────────────────────
+                
+                if pais_seleccionado == '🌎 Todos los países':
+                    # Promedio general (tu viz 2 original)
+                    df_mensual = df_full.groupby('mes').agg({'turistas': 'mean'}).reset_index()
+                    titulo_grafico = 'Promedio General por Mes'
+                    info_texto = "📊 Mostrando promedio de **todos los países**"
+                else:
+                    # Filtrar por país seleccionado
+                    df_filtrado = df_full[df_full['pais_origen'] == pais_seleccionado]
+                    df_mensual = df_filtrado.groupby('mes').agg({'turistas': 'mean'}).reset_index()
+                    titulo_grafico = f'Estacionalidad de {pais_seleccionado}'
+                    info_texto = f"📍 Mostrando datos de **{pais_seleccionado}**"
+                
+                # Agregar nombres de meses
+                df_mensual['mes_nombre'] = df_mensual['mes'].map({
+                    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+                    5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+                    9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+                })
+                
+                # ───────────────────────────────────────────────────────────
+                # GRÁFICO DE BARRAS (ESTACIONALIDAD)
+                # ───────────────────────────────────────────────────────────
+                
+                bar_chart = alt.Chart(df_mensual).mark_bar(
+                    cornerRadiusTopLeft=5,
+                    cornerRadiusTopRight=5
+                ).encode(
+                    x=alt.X('mes_nombre:N', 
+                        title='Mes', 
+                        sort=[
+                            'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                            'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+                        ],
+                        axis=alt.Axis(labelAngle=-45)),
+                    y=alt.Y('turistas:Q', 
+                        title='Promedio de Turistas', 
+                        axis=alt.Axis(format=',')),
+                    color=alt.Color('turistas:Q', 
+                                scale=alt.Scale(scheme='blues'), 
+                                legend=None),
+                    tooltip=[
+                        alt.Tooltip('mes_nombre:N', title='Mes'),
+                        alt.Tooltip('turistas:Q', title='Promedio Turistas', format=',')
+                    ]
+                ).properties(
+                    height=400,
+                    title=titulo_grafico
+                )
+                
+                st.altair_chart(bar_chart, use_container_width=True)
+                
+                # Info dinámica
+                st.info(info_texto)
+                
+                # ───────────────────────────────────────────────────────────
+                # MÉTRICAS ADICIONALES
+                # ───────────────────────────────────────────────────────────
+                
+                if len(df_mensual) > 0:
+                    mes_max = df_mensual.loc[df_mensual['turistas'].idxmax()]
+                    mes_min = df_mensual.loc[df_mensual['turistas'].idxmin()]
+                    
+                    col_a, col_b, col_c = st.columns(3)
+                    
+                    with col_a:
+                        st.metric(
+                            "🔥 Mes Pico",
+                            mes_max['mes_nombre'],
+                            f"{mes_max['turistas']:,.0f}"
+                        )
+                    
+                    with col_b:
+                        st.metric(
+                            "📉 Mes Más Bajo",
+                            mes_min['mes_nombre'],
+                            f"{mes_min['turistas']:,.0f}"
+                        )
+                    
+                    with col_c:
+                        variacion = ((mes_max['turistas'] - mes_min['turistas']) / mes_min['turistas']) * 100
+                        st.metric(
+                            "📊 Variación",
+                            f"{variacion:.0f}%",
+                            "diferencia pico-bajo"
+                        )
+            
+            # ───────────────────────────────────────────────────────────────
+            # INSIGHTS GENERALES
+            # ───────────────────────────────────────────────────────────────
+            
+            st.markdown("---")
             
             st.markdown("""
-            **💡 Insights:**
-            - 🌎 Principales mercados turísticos identificados
-            - 📊 Base para estrategias de marketing focalizadas
-            - 🎯 Oportunidades de crecimiento por mercado
+            ### 💡 Insights Combinados:
+            
+            **Sobre Países:**
+            - 🌎 **Brasil** lidera como principal mercado emisor
+            - 🇪🇺 **Europa** muestra estacionalidad marcada (verano argentino)
+            - 🇨🇱 **Chile** tiene patrón más uniforme (proximidad geográfica)
+            
+            **Sobre Estacionalidad:**
+            - 📅 **Enero y Diciembre**: Temporada alta (verano)
+            - 🍷 **Marzo**: Pico por Fiesta de la Vendimia
+            - ❄️ **Mayo-Junio**: Temporada baja
+            - ⛷️ **Julio-Agosto**: Repunte por turismo de nieve
+            
+            **Recomendaciones:**
+            - 🎯 Campañas de marketing focalizadas por país y mes
+            - 💰 Pricing dinámico según estacionalidad
+            - 👥 Planificación de personal según demanda esperada
             """)
-    
-    else:
-        st.warning("⚠️ Datos no disponibles para generar visualizaciones.")
+
+        else:
+            st.warning("⚠️ Datos de 'pais_origen' no disponibles.")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PÁGINA 4: INFORMACIÓN DEL MODELO
@@ -786,7 +891,7 @@ elif pagina == "🔮 Hacer Predicciones":
                 # PRIORIDAD 2: df_full solo como fallback
                 elif df_full is not None and 'pais_origen' in df_full.columns:
                     paises_disponibles = sorted(df_full['pais_origen'].unique().tolist())
-                    st.caption(f"⚠️ Usando dataset ({len(paises_disponibles)} países - puede tener duplicados)")
+                    st.caption(f" Usando dataset ({len(paises_disponibles)} países - puede tener duplicados)")
                 
                 # PRIORIDAD 3: Valores por defecto limpios
                 else:
@@ -866,10 +971,10 @@ elif pagina == "🔮 Hacer Predicciones":
                 st.markdown("### 💰 Económico")
                 
                 precio_input = st.number_input(
-                    "Precio Promedio (USD)",
+                    "Precio del dolar",
                     min_value=0.0,
                     max_value=5000.0,
-                    value=850.0,
+                    value=1000.0,
                     step=50.0,
                     help="Precio promedio del alojamiento"
                 )
@@ -1270,7 +1375,7 @@ elif pagina == "🔮 Hacer Predicciones":
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 2rem 0;">
-    <p><strong>Predictor de Turismo en Mendoza</strong> | Desarrollado por Julian Cadenas</p>
+    <p><strong>Predictor de Turismo en Argentina</strong> | Desarrollado por Julian Cadenas</p>
     <p>Ciencia de Datos | Entrega Final - Visualización e Integración | 2025</p>
     <p>🏔️ Mendoza, Argentina 🇦🇷</p>
 </div>

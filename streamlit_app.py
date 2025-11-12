@@ -341,43 +341,75 @@ elif pagina == "📊 Exploración de Datos":
         
         with tab4:
             st.markdown("### Matriz de Correlación")
-            
+
             # Seleccionar solo columnas numéricas
             numeric_cols = df_full.select_dtypes(include=[np.number]).columns.tolist()
-            
+
             if len(numeric_cols) > 1:
-                # Calcular correlación
-                corr_matrix = df_full[numeric_cols].corr()
-                
-                # Heatmap con Plotly
-                fig = px.imshow(
-                    corr_matrix,
-                    labels=dict(color="Correlación"),
-                    x=corr_matrix.columns,
-                    y=corr_matrix.columns,
-                    color_continuous_scale='RdBu_r',
-                    zmin=-1, zmax=1,
-                    title="Matriz de Correlación entre Variables Numéricas"
-                )
-                fig.update_layout(height=600)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Top correlaciones con turistas
-                if 'turistas' in corr_matrix.columns:
-                    st.markdown("### Top 10 Variables más Correlacionadas con Turistas")
-                    correlaciones_turistas = corr_matrix['turistas'].drop('turistas').sort_values(ascending=False).head(10)
-                    
-                    fig2 = px.bar(
-                        x=correlaciones_turistas.values,
-                        y=correlaciones_turistas.index,
-                        orientation='h',
-                        title="Correlaciones con Variable Objetivo",
-                        labels={'x': 'Correlación', 'y': 'Variable'},
-                        color=correlaciones_turistas.values,
-                        color_continuous_scale='RdBu_r'
+                # Detectar columnas problemáticas:
+                #  - constantes (varianza cero)
+                #  - que resultan en toda la fila/columna de NaN en la correlación
+                constant_cols = [c for c in numeric_cols if df_full[c].nunique(dropna=False) <= 1]
+                zero_var_cols = [c for c in numeric_cols if df_full[c].std(skipna=True) == 0]
+
+                # Calcular correlación provisional para detectar columnas con correlaciones NaN
+                corr_tmp = df_full[numeric_cols].corr()
+                nan_corr_cols = [c for c in corr_tmp.columns if corr_tmp[c].isna().all()]
+
+                # Unir motivos de exclusión
+                cols_a_eliminar = set(constant_cols + zero_var_cols + nan_corr_cols)
+
+                # Forzar exclusión explícita de 'interes_alto' si aparece
+                if 'interes_alto' in numeric_cols:
+                    cols_a_eliminar.add('interes_alto')
+
+                # Columnas finales para la matriz
+                filtered_numeric_cols = [c for c in numeric_cols if c not in cols_a_eliminar]
+
+                # Mostrar qué columnas se excluyeron (opcional)
+                if cols_a_eliminar:
+                    st.caption(f"Columnas excluidas de la correlación: {', '.join(sorted(cols_a_eliminar))}")
+
+                if len(filtered_numeric_cols) > 1:
+                    # Calcular correlación limpia
+                    corr_matrix = df_full[filtered_numeric_cols].corr()
+
+                    # Heatmap con Plotly
+                    fig = px.imshow(
+                        corr_matrix,
+                        labels=dict(color="Correlación"),
+                        x=corr_matrix.columns,
+                        y=corr_matrix.columns,
+                        color_continuous_scale='RdBu_r',
+                        zmin=-1, zmax=1,
+                        title="Matriz de Correlación entre Variables Numéricas (limpia)"
                     )
-                    fig2.update_layout(showlegend=False, height=400)
-                    st.plotly_chart(fig2, use_container_width=True)
+                    fig.update_layout(height=600)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # Top correlaciones con turistas
+                    if 'turistas' in corr_matrix.columns:
+                        st.markdown("### Top 10 Variables más Correlacionadas con Turistas")
+                        correlaciones_turistas = (
+                            corr_matrix['turistas']
+                            .drop('turistas')
+                            .sort_values(ascending=False)
+                            .head(10)
+                        )
+
+                        fig2 = px.bar(
+                            x=correlaciones_turistas.values,
+                            y=correlaciones_turistas.index,
+                            orientation='h',
+                            title="Correlaciones con Variable Objetivo",
+                            labels={'x': 'Correlación', 'y': 'Variable'},
+                            color=correlaciones_turistas.values,
+                            color_continuous_scale='RdBu_r'
+                        )
+                        fig2.update_layout(showlegend=False, height=400)
+                        st.plotly_chart(fig2, use_container_width=True)
+                else:
+                    st.warning("No hay suficientes variables numéricas para calcular correlaciones después de limpiar columnas problemáticas.")
             else:
                 st.warning("No hay suficientes variables numéricas para calcular correlaciones.")
     
